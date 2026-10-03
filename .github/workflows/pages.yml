@@ -49,6 +49,21 @@ jobs:
           };
           EOF
 
+      # Соединение с Supabase открываем ЗАРАНЕЕ, ещё на разборе страницы.
+      # Скрипты лежат на своём домене, а первый запрос к базе (вход, история)
+      # уходит на соседний хост — без preconnect браузер тратит на него
+      # лишний круг DNS+TLS, и это самые заметные сотни миллисекунд входа.
+      # Подставить адрес можно только на сборке: в исходнике его нет.
+      - name: Preconnect to the Supabase host
+        env:
+          SB: ${{ vars.SUPABASE_URL }}
+        run: |
+          HOST=$(printf '%s' "$SB" | sed -E 's#^(https?://[^/]+).*#\1#')
+          if [ -n "$HOST" ]; then
+            sed -i "s#<!--PRE-CONNECT-->#<link rel=\"preconnect\" href=\"$HOST\" crossorigin>#" public/index.html
+          fi
+          grep -o 'preconnect[^>]*' public/index.html || echo 'preconnect not injected'
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

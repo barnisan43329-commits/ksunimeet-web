@@ -12,3 +12,7 @@ config.local.js
 
 # Копия клиента, которую workflow кладёт в сайт (собирается из node_modules).
 public/vendor/
+
+# config.js собирает сама Pages из переменных репозитория; локальная копия
+# нужна только чтобы запустить сайт у себя: bash tools/serve.mjs
+public/config.js
