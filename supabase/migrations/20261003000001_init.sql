@@ -20,8 +20,17 @@
 -- =====================================================================
 -- Вход как раньше: имя + пароль, без почты и телефона. Supabase Auth
 -- требует email, поэтому синтезируем его из имени:
---   barni  ->  barni@ksunimeet.local
+--   barni  ->  barni@ksunimeet.example.com
 -- Пользователь этого адреса никогда не видит и писем на него нет.
+--
+-- ПОЧЕМУ ИМЕННО example.com (проверено на живом проекте, не догадка):
+--   1. `@ksunimeet.local` Supabase отклоняет с 400 `email_address_invalid`.
+--   2. Домен `ksunimeet.app` тоже отклонён — сервер проверяет, что у домена
+--      есть почта (MX). `example.com` такую проверку проходит, а письма на
+--      него никуда не уходят — то есть мусора никому не создаём.
+--   3. Подтверждение почты ОБЯЗАТЕЛЬНО выключено в проекте
+--      (mailer_autoconfirm=true): иначе письмо некуда доставить и войти
+--      нельзя вообще.
 
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
