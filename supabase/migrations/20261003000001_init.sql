@@ -270,11 +270,15 @@ alter table public.room_events         enable row level security;
 alter table public.room_peers          enable row level security;
 alter table public.push_subscriptions  enable row level security;
 
--- profiles: свой профиль читаю и правлю; чужие вижу только по имени/номеру
--- (поиск человека возможен, а вот читать чужую строку целиком — нет).
+-- profiles: свой профиль читаю и правлю; чужой — только чтобы найти человека
+-- по имени или номеру.
+--
+-- ВАЖНО: anon-ключ публичный (он уезжает в статический сайт), поэтому
+-- `using (true)` здесь был бы ошибкой — любой с этим ключом вычитал бы ВСЕ
+-- имена и номера. Требуем вход: поиск доступен вошедшим, гостя база не пустит.
 drop policy if exists profiles_select_self on public.profiles;
 create policy profiles_select_self on public.profiles
-  for select using (true);   -- поиск по имени/номеру должен работать для всех
+  for select using (auth.uid() is not null);
 
 drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles
@@ -327,10 +331,10 @@ create policy calls_update_participant on public.calls
   for update using (caller_id = auth.uid() or callee_id = auth.uid())
   with check (caller_id = auth.uid() or callee_id = auth.uid());
 
--- rooms: читать может любой вошедший по коду, создаёт только хост.
+-- rooms: читать может вошедший по коду, создаёт только хост.
 drop policy if exists rooms_select_all on public.rooms;
 create policy rooms_select_all on public.rooms
-  for select using (true);
+  for select using (auth.uid() is not null);
 
 drop policy if exists rooms_insert_host on public.rooms;
 create policy rooms_insert_host on public.rooms
@@ -340,10 +344,10 @@ drop policy if exists rooms_update_host on public.rooms;
 create policy rooms_update_host on public.rooms
   for update using (host_id = auth.uid()) with check (host_id = auth.uid());
 
--- room_events: в комнату по коду пишет любой вошедший.
+-- room_events: в комнату по коду пишет любой вошедший (сигналинг WebRTC).
 drop policy if exists room_events_select_all on public.room_events;
 create policy room_events_select_all on public.room_events
-  for select using (true);
+  for select using (auth.uid() is not null);
 
 drop policy if exists room_events_insert_auth on public.room_events;
 create policy room_events_insert_auth on public.room_events
@@ -352,7 +356,7 @@ create policy room_events_insert_auth on public.room_events
 -- room_peers: своё место занимаю и отпускаю сам.
 drop policy if exists room_peers_select_all on public.room_peers;
 create policy room_peers_select_all on public.room_peers
-  for select using (true);
+  for select using (auth.uid() is not null);
 
 drop policy if exists room_peers_rw_self on public.room_peers;
 create policy room_peers_rw_self on public.room_peers
