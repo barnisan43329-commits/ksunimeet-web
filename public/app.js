@@ -173,7 +173,9 @@
     seen: {},              // id сообщений, которые уже в ленте
     chatOpen: false,
     tab: 'chats',
-    searchMode: 'contact'
+    searchMode: 'contact',
+    signingIn: null,       // uid, для которого вход уже идёт (защита от двойной загрузки)
+    signingInPromise: null
   };
 
   /* ================= Supabase ================= */
@@ -204,6 +206,10 @@
   function showAuth() {
     state.user = null;
     state.chatOpen = false;
+    // Снимаем пометку входа: после выхода тот же человек должен войти заново,
+    // а не получить «уже вхожу» от прошлого раза.
+    state.signingIn = null;
+    state.signingInPromise = null;
     $('chat-view').classList.add('hidden');
     $('screen-auth').classList.remove('hidden');
     $('screen-app').classList.add('hidden');
@@ -281,25 +287,46 @@
 
   /* ================= профиль ================= */
 
+  /* Вход может прийти ДВУМЯ путями сразу: из getSession() при открытии
+   * страницы и из onAuthStateChange('SIGNED_IN'). Пока профиль грузится по
+   * сети, state.user ещё пуст — и второй путь запускал ВТОРОЙ полный цикл
+   * загрузки (профиль, контакты и 300 сообщений — по разу лишних). На
+   * медленном канале это заметные полсекунды и лишний трафик.
+   * Поэтому пометку ставим СИНХРОННО, до первого await, а не по state.user. */
   function onSignedIn(session) {
-    if (state.user && state.user.id === session.user.id) return Promise.resolve();
+    var uid = session.user.id;
+    if (state.user && state.user.id === uid) return Promise.resolve();
+    if (state.signingIn === uid) return state.signingInPromise || Promise.resolve();
+    state.signingIn = uid;
     try { sb.realtime.setAuth(session.access_token); } catch (e) {}
-    return loadProfile(session.user.id).then(function () {
+    state.signingInPromise = loadProfile(uid).then(function () {
       showApp();
       setTab('chats');
       loadContacts();
       loadChats();
       subscribe();
-      // Ключ к «мгновенности»: если пользователь вернулся в приложение,
-      // подписка могла отвалиться — молча поднимаем её и перечитываем чаты.
-      document.addEventListener('visibilitychange', onVisible);
+    }).catch(function (e) {
+      // Не удалось — снимаем пометку, чтобы повторный вход сработал.
+      state.signingIn = null;
+      state.signingInPromise = null;
+      throw e;
     });
+    return state.signingInPromise;
   }
 
-  function onVisible() {
-    if (document.visibilityState !== 'visible' || !state.user) return;
-    loadChats();
-    if (state.chatOpen && state.peer) loadMessages(state.peer.id, true);
+  /* Возврат в приложение: подписка могла отвалиться, пока вкладка спала, —
+   * молча поднимаем её и перечитываем чаты. Слушатель вешается ОДИН раз: он
+   * раньше добавлялся на каждом входе, и после нескольких входов один возврат
+   * в приложение отправлял столько же запросов, сколько было входов. */
+  var visibleWired = false;
+  function wireVisibility() {
+    if (visibleWired) return;
+    visibleWired = true;
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible' || !state.user) return;
+      loadChats();
+      if (state.chatOpen && state.peer) loadMessages(state.peer.id, true);
+    });
   }
 
   function loadProfile(uid) {
@@ -657,7 +684,6 @@
     var msg = $('search-msg');
     if (q.length < 2) { $('search-results').innerHTML = ''; msg.textContent = T('search_hint'); return; }
     // Запятые и скобки сломали бы синтаксис фильтра PostgREST — вырезаем.
-    // Запятые и скобки сломали бы синтаксис фильтра PostgREST — вырезаем.
     // Звёздочка в PostgREST — это «%» в SQL LIKE, поэтому шаблон собираем из неё.
     var safe = q.replace(/[,()*]/g, '').trim();
     if (!safe) { $('search-results').innerHTML = ''; msg.textContent = T('search_hint'); return; }
@@ -792,6 +818,7 @@
 
   applyLang();
   setMode('login');
+  wireVisibility();
 
   // Уже входили раньше? Тогда приложение открывается сразу — без экрана входа.
   sb.auth.getSession().then(function (r) {
