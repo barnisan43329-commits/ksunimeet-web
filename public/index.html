@@ -85,14 +85,14 @@
     });
   }
 
-  function probe(url, ms) {
+  function probe(url, ms, headers) {
     return new Promise(function (resolve) {
       var ctrl = null;
       try { ctrl = new AbortController(); } catch (e) {}
       var done = false;
       var timer = setTimeout(function () { done = true; if (ctrl) { try { ctrl.abort(); } catch (e) {} } resolve({ ok: false, err: 'timeout ' + ms + 'ms' }); }, ms);
       var t0 = Date.now();
-      fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+      fetch(url, { cache: 'no-store', headers: headers || {}, signal: ctrl ? ctrl.signal : undefined })
         .then(function (r) {
           if (done) return;
           clearTimeout(timer); done = true;
@@ -113,11 +113,15 @@
 
     // 5. Доступен ли сам Supabase. Без входа ответ будет 200 с [] — это успех:
     //    значит сервер ответил, а данные закрыты правилами доступа.
+    // Публичный anon-ключ подставляем в заголовок намеренно: без него
+    // Supabase отвечает 401 даже когда всё в порядке, и «401» в отчёте
+    // читалось бы как поломка. С ключом ожидаемый ответ — 200 и [].
+    var hdrs = cfg.supabaseAnonKey ? { apikey: cfg.supabaseAnonKey, Authorization: 'Bearer ' + cfg.supabaseAnonKey } : {};
     if (cfg.supabaseUrl) {
-      var r = await probe(cfg.supabaseUrl + '/rest/v1/profiles?select=username', 15000);
+      var r = await probe(cfg.supabaseUrl + '/rest/v1/profiles?select=username', 15000, hdrs);
       record(r.ok, '5. Supabase API',
         r.ok ? ('status: ' + r.status + ' · ' + r.ms + ' ms') : ('не дошло: ' + (r.err || '?') + ' · ' + r.ms + ' ms'));
-      var a = await probe(cfg.supabaseUrl + '/auth/v1/settings', 15000);
+      var a = await probe(cfg.supabaseUrl + '/auth/v1/settings', 15000, hdrs);
       record(a.ok, '6. Вход (auth)', a.ok ? ('status: ' + a.status + ' · ' + a.ms + ' ms') : ('не дошло: ' + (a.err || '?') + ' · ' + a.ms + ' ms'));
     }
 
