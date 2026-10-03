@@ -207,8 +207,10 @@ create table if not exists public.rooms (
   sync_seq    bigint not null default 0,
   ctrl        jsonb,            -- заявка гостя на управление
   ctrl_seq    bigint not null default 0,
-  grant       boolean not null default false,   -- разрешено ли гостю управлять
-  grant_at    bigint not null default 0
+  -- ВНИМАНИЕ: имя `grant` занято в Postgres (это ключевое слово GRANT) —
+  -- колонку так называть нельзя, запрос падает с 42601. Поэтому ctrl_granted.
+  ctrl_granted    boolean not null default false,  -- разрешено ли гостю управлять
+  ctrl_granted_at bigint not null default 0
 );
 
 -- События комнаты: сигналинг WebRTC и пульт. Раньше всё это лежало в
@@ -247,7 +249,7 @@ create table if not exists public.push_subscriptions (
   user_id     uuid not null references public.profiles(id) on delete cascade,
   endpoint    text not null unique,
   p256dh      text not null,
-  auth        text not null,
+  auth_key    text not null,
   created_at  timestamptz not null default now()
 );
 
