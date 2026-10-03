@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#faf9f5">
+<title>KsuNiMeet — проверка / reachability test</title>
+<style>
+  html,body{margin:0;background:#faf9f5;color:#1a1a1a;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:620px;margin:0 auto;padding:20px 16px 48px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{opacity:.65;font-size:13px;margin:0 0 18px}
+  .big{font-size:16px;font-weight:700;padding:14px 16px;border-radius:12px;margin:0 0 16px}
+  .big.run{background:#eef3ff;color:#1a3a8f}
+  .big.ok{background:#e6f6ec;color:#0d6b3a}
+  .big.mid{background:#fff6e5;color:#8a5a00}
+  .big.bad{background:#fdeaea;color:#9b1c1c}
+  .row{background:#fff;border:1px solid #ece8e0;border-radius:10px;padding:10px 12px;margin:0 0 8px}
+  .row .name{font-weight:600}
+  .row .meta{font-size:13px;opacity:.8;margin-top:2px;word-break:break-all}
+  textarea{width:100%;box-sizing:border-box;margin-top:14px;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;border:1px solid #ddd;border-radius:10px;padding:10px;height:130px}
+  button{font:inherit;font-weight:600;padding:12px 20px;border:0;border-radius:999px;background:#1f8f5f;color:#fff;margin-top:10px}
+  .note{font-size:12px;opacity:.6;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>KsuNiMeet — проверка доступности</h1>
+  <p class="sub">Reachability test · GitHub Pages + Supabase</p>
+  <div id="verdict" class="big run">Идёт проверка… / Testing…</div>
+  <div id="rows"></div>
+  <p class="note">Нажмите «Копировать» и отправьте результат. / Tap “Copy” and send the result.</p>
+  <button id="copy" type="button">Копировать / Copy</button>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  'use strict';
+  // Эта страница отвечает ровно на один вопрос: работают ли из сети
+  // посетителя ОБЕ половины новой схемы — сам GitHub Pages и Supabase.
+  // Пока не известно, что они грузятся у неё, строить приложение бессмысленно.
+  var rowsEl = document.getElementById('rows');
+  var verdictEl = document.getElementById('verdict');
+  var outEl = document.getElementById('out');
+  var lines = [];
+  function log(s) { lines.push(s); outEl.value = lines.join('\n'); }
+  function row(label, meta, state) {
+    var d = document.createElement('div');
+    d.className = 'row';
+    d.innerHTML = '<div class="name">' + label + '</div><div class="meta">' + meta + '</div>';
+    if (state === 'bad') d.style.borderColor = '#e0b4b4';
+    rowsEl.appendChild(d);
+  }
+
+  var results = [];
+  function record(ok, label, meta) {
+    results.push(ok);
+    log((ok ? '[ok] ' : '[!] ') + label + ' :: ' + meta);
+    row(label, meta, ok ? 'ok' : 'bad');
+  }
+
+  var cfg = window.KSU_CONFIG || {};
+  log('KsuNiMeet reachability test');
+  log('when: ' + new Date().toISOString());
+  log('url: ' + location.href);
+  log('ua: ' + navigator.userAgent);
+  log('online: ' + (navigator.onLine ? 'yes' : 'no'));
+  log('');
+
+  // 1. Если вы это видите — GitHub Pages из вашей сети уже открылся.
+  record(true, '1. GitHub Pages (эта страница)', 'страница загрузилась / page loaded');
+  record(!!cfg.supabaseUrl, '2. config.js', cfg.supabaseUrl ? ('url: ' + cfg.supabaseUrl) : 'config.js не загрузился');
+
+  // 3. Вендоренный клиент лежит рядом, на том же домене — не с CDN.
+  function loadClient() {
+    return new Promise(function (resolve) {
+      var s = document.createElement('script');
+      s.src = 'vendor/supabase.js';
+      s.onload = function () { resolve(true); };
+      s.onerror = function () { resolve(false); };
+      document.head.appendChild(s);
+      setTimeout(function () { resolve(!!(window.supabase && window.supabase.createClient)); }, 20000);
+    });
+  }
+
+  function probe(url, ms) {
+    return new Promise(function (resolve) {
+      var ctrl = null;
+      try { ctrl = new AbortController(); } catch (e) {}
+      var done = false;
+      var timer = setTimeout(function () { done = true; if (ctrl) { try { ctrl.abort(); } catch (e) {} } resolve({ ok: false, err: 'timeout ' + ms + 'ms' }); }, ms);
+      var t0 = Date.now();
+      fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+        .then(function (r) {
+          if (done) return;
+          clearTimeout(timer); done = true;
+          resolve({ ok: true, status: r.status, ms: Date.now() - t0 });
+        })
+        .catch(function (e) {
+          if (done) return;
+          clearTimeout(timer); done = true;
+          resolve({ ok: false, err: (e && (e.name || e.message)) || 'error', ms: Date.now() - t0 });
+        });
+    });
+  }
+
+  (async function () {
+    // 4. Клиент Supabase со своего домена
+    var clientLoaded = await loadClient();
+    record(clientLoaded, '4. supabase.js (со своего домена)', clientLoaded ? 'загрузился и выполнился' : 'НЕ загрузился');
+
+    // 5. Доступен ли сам Supabase. Без входа ответ будет 200 с [] — это успех:
+    //    значит сервер ответил, а данные закрыты правилами доступа.
+    if (cfg.supabaseUrl) {
+      var r = await probe(cfg.supabaseUrl + '/rest/v1/profiles?select=username', 15000);
+      record(r.ok, '5. Supabase API',
+        r.ok ? ('status: ' + r.status + ' · ' + r.ms + ' ms') : ('не дошло: ' + (r.err || '?') + ' · ' + r.ms + ' ms'));
+      var a = await probe(cfg.supabaseUrl + '/auth/v1/settings', 15000);
+      record(a.ok, '6. Вход (auth)', a.ok ? ('status: ' + a.status + ' · ' + a.ms + ' ms') : ('не дошло: ' + (a.err || '?') + ' · ' + a.ms + ' ms'));
+    }
+
+    var went = results.filter(Boolean).length;
+    var total = results.length;
+    var cls, txt;
+    if (went === total) { cls = 'big ok'; txt = 'Всё доступно / everything reachable ✔'; }
+    else if (went >= 2) { cls = 'big mid'; txt = 'Частично / partly (' + went + ' из ' + total + ')'; }
+    else { cls = 'big bad'; txt = 'Недоступно / not reachable'; }
+    verdictEl.className = cls;
+    verdictEl.textContent = txt;
+    log('');
+    log('VERDICT: ' + txt + '  (' + went + '/' + total + ')');
+  })();
+
+  document.getElementById('copy').addEventListener('click', function () {
+    outEl.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    if (navigator.clipboard) navigator.clipboard.writeText(outEl.value).catch(function () {});
+    this.textContent = 'Скопировано ✓';
+  });
+})();
+</script>
+</body>
+</html>
