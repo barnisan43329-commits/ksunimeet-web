@@ -1,0 +1,13 @@
+{
+  "name": "ksunimeet-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KsuNiMeet front-end (GitHub Pages) backed by Supabase",
+  "scripts": {
+    "vendor": "node tools/vendor.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
