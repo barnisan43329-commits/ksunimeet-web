@@ -6,6 +6,20 @@
 -- проекте доступен (1.6.4), ставим его и запускаем чистку каждые 5 минут.
 create extension if not exists pg_cron;
 
+-- Срок жизни комнаты поднят с 2 до 12 часов. «Смотрим вместе» — не
+-- короткий сеанс: полнометражный фильм идёт дольше двух часов, и по старому
+-- TTL комната исчезала бы прямо во время просмотра (вместе с синхронизацией).
+-- 12 часов совпадает со сроком жизни брошенных фильмов в старой версии.
+create or replace function public.ksu_cleanup()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  select public.ksu_expire_ringing();
+  delete from public.rooms where created_at < now() - interval '12 hours';
+$$;
+
 -- Повторный вызов с тем же именем обновляет задание — миграция идемпотентна.
 select cron.schedule('ksu-cleanup', '*/5 * * * *', $$select public.ksu_cleanup()$$);
 
