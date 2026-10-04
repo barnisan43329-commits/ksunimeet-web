@@ -46,7 +46,10 @@
       not_found: 'Никого не найдено.', added: 'Добавлено в контакты',
       you: 'Вы: ', failed: 'Не отправлено · нажмите, чтобы повторить',
       last_none: 'Сообщений пока нет', copy_ok: 'Номер скопирован',
-      today: 'сегодня', yesterday: 'Вчера', write: 'Написать', added_short: 'в контактах'
+      today: 'сегодня', yesterday: 'Вчера', write: 'Написать', added_short: 'в контактах',
+      watch: 'Смотрим вместе', call_audio: 'Аудиозвонок', call_video: 'Видеозвонок',
+      incoming_audio: 'Входящий звонок', incoming_video: 'Входящий видеозвонок',
+      answer: 'Ответить', decline: 'Отклонить'
     },
     en: {
       tag_micro: 'Free messaging for two',
@@ -72,7 +75,10 @@
       not_found: 'Nobody found.', added: 'Added to contacts',
       you: 'You: ', failed: 'Not sent · tap to retry',
       last_none: 'No messages yet', copy_ok: 'Number copied',
-      today: 'today', yesterday: 'Yesterday', write: 'Message', added_short: 'in contacts'
+      today: 'today', yesterday: 'Yesterday', write: 'Message', added_short: 'in contacts',
+      watch: 'Watch together', call_audio: 'Voice call', call_video: 'Video call',
+      incoming_audio: 'Incoming call', incoming_video: 'Incoming video call',
+      answer: 'Answer', decline: 'Decline'
     }
   };
 
@@ -201,6 +207,27 @@
   function emailFor(name) { return String(name).toLowerCase() + '@ksunimeet.example.com'; }
   function chatKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
 
+  /* ================= мост с Android =================
+   *
+   * В APK страница живёт внутри WebView, и нативные уведомления нужно
+   * включать и снабжать токеном от самой страницы. В обычном браузере
+   * window.KsuNiMeet нет — тогда все вызовы молча ничего не делают. */
+  function bridge(name, a, b, c) {
+    try {
+      var br = window.KsuNiMeet;
+      if (br && typeof br[name] === 'function') br[name](a, b, c);
+    } catch (e) {}
+  }
+
+  /* Токен сессии кладём в нативную память: фоновый опрос читает новые
+   * сообщения от имени пользователя. access_token живёт около часа, поэтому
+   * отдаём ещё и refresh_token — сервис сам продлит доступ, пока приложение
+   * свёрнуто и страница не может этого сделать. */
+  function pushSession(session) {
+    if (!session || !session.access_token || !session.user) return;
+    bridge('saveSession', session.access_token, session.user.id, session.refresh_token || '');
+  }
+
   /* ================= экраны ================= */
 
   function showAuth() {
@@ -303,8 +330,12 @@
       showApp();
       setTab('chats');
       loadContacts();
-      loadChats();
+      loadChats().then(openDeepLink);
       subscribe();
+      wireExtras();
+      pushSession(session);
+      bridge('enable');        // фоновые уведомления (нативный опрос Supabase)
+      bridge('setAppActive', true);
     }).catch(function (e) {
       // Не удалось — снимаем пометку, чтобы повторный вход сработал.
       state.signingIn = null;
@@ -475,6 +506,18 @@
     state.peer = null;
     $('chat-view').classList.add('hidden');
     loadChats();
+  }
+
+  /* APK открывает страницу с ?peer=<id>, когда человек нажал уведомление о
+   * сообщении. Открываем нужный чат, как только подгрузились чаты, и убираем
+   * параметр из адреса, чтобы он не сработал снова. */
+  function openDeepLink() {
+    var id = null;
+    try { id = new URLSearchParams(location.search).get('peer'); } catch (e) {}
+    if (!id || !state.user) return;
+    if (state.chatOpen && state.peer && state.peer.id === id) return;
+    openChat(peerOf(id));
+    try { history.replaceState(history.state, '', location.pathname + location.hash); } catch (e) {}
   }
 
   function loadMessages(peerId, quiet) {
@@ -797,6 +840,7 @@
 
   function signOut() {
     if (channel) { try { sb.removeChannel(channel); } catch (e) {} channel = null; }
+    bridge('disable');   // вышли — фоновый опрос больше не нужен
     sb.auth.signOut().then(showAuth, showAuth);
   }
   $('logout-btn').addEventListener('click', signOut);
@@ -814,6 +858,146 @@
     if (state.chatOpen) closeChat();
   });
 
+  /* ================= звонки и «Смотрим вместе» =================
+   *
+   * Исходящий звонок — строка в `calls`; входящий приходит событием
+   * Realtime, без опроса. Решение (ответить/отклонить) пишется в ту же
+   * строку, поэтому у звонящего состояние меняется мгновенно.
+   */
+  var callSub = null;
+
+  function randomCode() {
+    var a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', s = '';
+    for (var i = 0; i < 5; i++) s += a.charAt(Math.floor(Math.random() * a.length));
+    return s;
+  }
+
+  function startCall(peer, withVideo) {
+    if (!peer || !state.user) return;
+    var room = randomCode();
+    sb.from('calls').insert({
+      caller_id: state.user.id, callee_id: peer.id, state: 'ringing',
+      video: !!withVideo, room_code: room
+    }).select('id').then(function (r) {
+      if (r.error || !r.data || !r.data[0]) { toast(r.error ? r.error.message : T('err_net')); return; }
+      location.href = 'call.html?call=' + encodeURIComponent(r.data[0].id) + '&out=1&video=' + (withVideo ? 1 : 0);
+    });
+  }
+
+  function openWatch() { location.href = 'watch.html'; }
+
+  $('call-audio').addEventListener('click', function () { startCall(state.peer, false); });
+  $('call-video').addEventListener('click', function () { startCall(state.peer, true); });
+  $('watch-btn').addEventListener('click', openWatch);
+  $('watch-btn-2').addEventListener('click', openWatch);
+
+  /* ---- входящий звонок ---- */
+
+  var ringCall = null, ringTimer = null;
+
+  function showIncoming(c) {
+    ringCall = c;
+    sb.from('profiles').select('id,username,phone').eq('id', c.caller_id).maybeSingle().then(function (r) {
+      var p = r.data || { username: '?', phone: '' };
+      $('inc-avatar').textContent = (p.username || '?').charAt(0).toUpperCase();
+      $('inc-name').textContent = p.username || '?';
+      $('inc-phone').textContent = p.phone ? fmtPhone(p.phone) : '';
+      $('inc-kind').textContent = c.video ? T('incoming_video') : T('incoming_audio');
+    });
+    $('incoming').classList.remove('hidden');
+    // Нативный экран/мелодия в APK: система сама покажет «звонок», как WhatsApp.
+    try { if (window.KsuNiMeet && window.KsuNiMeet.inCall) window.KsuNiMeet.inCall(true); } catch (e) {}
+    try { document.title = T('incoming_audio') + ' · KsuNiMeet'; } catch (e) {}
+    if (ringTimer) clearInterval(ringTimer);
+    ringTimer = setInterval(function () { if (!ringCall) { clearInterval(ringTimer); ringTimer = null; return; } beep(); }, 1600);
+    beep();
+  }
+
+  function hideIncoming() {
+    ringCall = null;
+    $('incoming').classList.add('hidden');
+    if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+    try { document.title = 'KsuNiMeet — звонки и сообщения'; } catch (e) {}
+    try { if (window.KsuNiMeet && window.KsuNiMeet.inCall) window.KsuNiMeet.inCall(false); } catch (e) {}
+  }
+
+  /* Короткий тон через WebAudio: страница не может положиться на <audio>
+   * до первого касания, а генератор работает всегда. */
+  var ringCtx = null;
+  function beep() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!ringCtx) ringCtx = new AC();
+      if (ringCtx.state === 'suspended') ringCtx.resume().catch(function () {});
+      var o = ringCtx.createOscillator(), g = ringCtx.createGain();
+      o.type = 'sine'; o.frequency.value = 620;
+      g.gain.value = 0.0001;
+      o.connect(g); g.connect(ringCtx.destination);
+      var t0 = ringCtx.currentTime;
+      g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.7);
+      o.start(t0); o.stop(t0 + 0.75);
+    } catch (e) {}
+  }
+
+  $('inc-accept').addEventListener('click', function () {
+    if (!ringCall) return;
+    var id = ringCall.id;
+    hideIncoming();
+    location.href = 'call.html?call=' + encodeURIComponent(id) + '&video=' + (ringCall.video ? 1 : 0);
+  });
+
+  $('inc-decline').addEventListener('click', function () {
+    if (!ringCall) return;
+    var id = ringCall.id;
+    hideIncoming();
+    sb.from('calls').update({ state: 'declined' }).eq('id', id).then(function () {}, function () {});
+  });
+
+  function subscribeCalls() {
+    if (callSub || !state.user) return;
+    callSub = sb.channel('ksu-calls')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'calls', filter: 'callee_id=eq.' + state.user.id },
+        function (p) {
+          var c = p.new;
+          if (!c || c.state !== 'ringing') return;
+          if (ringCall) return;   // уже показываем другой
+          showIncoming(c);
+        })
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'calls', filter: 'id=eq.' + (ringCall ? ringCall.id : '00000000-0000-0000-0000-000000000000') },
+        function (p) {
+          var c = p.new;
+          if (!c || !ringCall || c.id !== ringCall.id) return;
+          if (c.state !== 'ringing') hideIncoming();
+        })
+      .subscribe();
+  }
+
+  /* Звонок мог начаться, пока мы были на другой вкладке, — проверяем один
+   * раз при входе, чтобы не пропустить свежий вызов. */
+  function checkPendingCall() {
+    if (!state.user) return;
+    sb.from('calls').select('id,caller_id,video,state,created_at')
+      .eq('callee_id', state.user.id).eq('state', 'ringing')
+      .order('created_at', { ascending: false }).limit(1).then(function (r) {
+        var c = r.data && r.data[0];
+        if (!c) return;
+        if (Date.now() - new Date(c.created_at).getTime() > 27000) return;  // уже истёк
+        if (!ringCall) showIncoming(c);
+      });
+  }
+
+  var watchBtnDone = false;
+  function wireExtras() {
+    if (watchBtnDone) return;
+    watchBtnDone = true;
+    subscribeCalls();
+    checkPendingCall();
+  }
+
   /* ================= старт ================= */
 
   applyLang();
@@ -828,7 +1012,9 @@
   });
 
   sb.auth.onAuthStateChange(function (evt, session) {
-    if (evt === 'SIGNED_OUT') showAuth();
+    if (evt === 'SIGNED_OUT') { bridge('disable'); showAuth(); }
+    // Токен продлили — сразу отдаём свежий нативному опросу.
+    else if (evt === 'TOKEN_REFRESHED' && session) pushSession(session);
     else if (evt === 'SIGNED_IN' && session && !state.user) onSignedIn(session).catch(function () {});
   });
 })();

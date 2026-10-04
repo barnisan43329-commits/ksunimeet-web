@@ -40,6 +40,18 @@ jobs:
           mkdir -p public/vendor
           cp node_modules/@supabase/supabase-js/dist/umd/supabase.js public/vendor/supabase.js
 
+      # Проверка, что все страницы и скрипты на месте. Опечатка в имени файла
+      # иначе доедет до продакшена и проявится только у пользователя.
+      - name: Check that every asset is present
+        run: |
+          set -e
+          for f in public/index.html public/app.js public/call.html public/call.js \
+                   public/watch.html public/watch.js public/turn.js public/favicon.svg \
+                   public/manifest.json public/vendor/supabase.js; do
+            test -s "$f" || { echo "MISSING: $f"; exit 1; }
+          done
+          echo "all assets present"
+
       - name: Write runtime config
         run: |
           cat > public/config.js <<EOF
