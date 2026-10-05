@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#faf9f5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>KsuNiMeet — звонки и сообщения</title>
+<meta name="description" content="Бесплатные сообщения и звонки 1-на-1. Свои номера, контакты. Работает в России.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="apple-touch-icon" href="favicon.svg">
+<link rel="preconnect" href="https://nmdhcddqwvkdrqfifacr.supabase.co" crossorigin>
+<!--
+  Вся вёрстка и стили — ОДНИМ ответом, без внешнего style.css.
+  Так у страницы ноль блокирующих запросов до первой отрисовки: на медленном
+  канале это разница между «сразу видно» и «секунду белый экран». Скрипты
+  идут отдельно и с defer — они не задерживают картинку.
+-->
+<style>
+:root{
+  --bg:#faf9f5;--bg-soft:#f0eee6;--panel:#f5f3ec;--card:#fff;
+  --line:#e8e4d9;--sep:rgba(31,30,29,.10);
+  --text:#1f1e1d;--text-2:#5f5e59;--text-3:#666460;
+  --accent:#c96442;--accent-deep:#a9482b;--accent-btn:#bd5230;--accent-soft:#f2e2da;
+  --green:#6d8b58;--red:#bf4d43;
+  --glass:rgba(250,249,245,.78);--glass-border:rgba(31,30,29,.09);
+  --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-serif:"Tiempos Text",ui-serif,Georgia,Cambria,"Times New Roman",serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;background:var(--bg)}
+html{overflow-x:hidden;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{font-family:var(--font);color:var(--text);-webkit-font-smoothing:antialiased;
+  overflow-x:hidden;overscroll-behavior-x:none}
+img,video,canvas,svg{max-width:100%}
+input,select,textarea,button{color-scheme:light;font:inherit}
+button{cursor:pointer}
+.hidden{display:none!important}
+.micro{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--text-3)}
+h1,h2,h3{margin:0}
+
+/* ---------- вход ---------- */
+.screen{min-height:100%;display:flex;flex-direction:column}
+#screen-auth{justify-content:center;align-items:center;padding:24px 18px 40px;text-align:center}
+.landing-wrap{width:100%;max-width:392px;display:flex;flex-direction:column;align-items:center}
+.app-icon{width:64px;height:64px;border-radius:19px;display:grid;place-items:center;
+  background:var(--accent-btn);color:#fff;margin-bottom:18px;
+  box-shadow:0 6px 22px rgba(189,82,48,.22)}
+#screen-auth h1{font-family:var(--font-serif);font-size:38px;font-weight:600;letter-spacing:-.02em}
+.tagline{color:var(--text-2);font-size:14.5px;line-height:1.5;margin:10px 0 22px}
+.auth-card{width:100%;background:var(--card);border:1px solid var(--line);
+  border-radius:18px;padding:16px;text-align:left}
+.seg{display:flex;gap:4px;background:var(--bg-soft);border-radius:11px;padding:4px;margin-bottom:14px}
+.seg-btn{flex:1;border:0;background:transparent;color:var(--text-2);font-weight:600;
+  padding:9px 0;border-radius:8px;font-size:14px;transition:background .12s,color .12s}
+.seg-btn.seg-active{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(31,30,29,.09)}
+.auth-hint{margin:0 0 12px;font-size:12.5px;color:var(--text-3);line-height:1.45}
+.auth-input{width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:11px;
+  background:var(--bg);font-size:16px;margin-bottom:10px;outline:none;transition:border-color .12s}
+.auth-input:focus{border-color:var(--accent)}
+.btn{border:0;border-radius:11px;font-weight:600;font-size:15px;padding:13px 18px;
+  transition:transform .08s,opacity .12s}
+.btn:active{transform:scale(.985)}
+.btn-primary{width:100%;background:var(--accent-btn);color:#fff}
+.btn[disabled]{opacity:.55;pointer-events:none}
+.hint{margin:10px 0 0;font-size:13px;color:var(--red);min-height:18px}
+.footnote{margin-top:20px;font-size:12px;color:var(--text-3);line-height:1.6}
+.lang-pill{border:1px solid var(--line);background:transparent;color:var(--text-2);
+  border-radius:999px;font-size:12px;font-weight:600;padding:6px 12px}
+#screen-auth .lang-pill{margin-top:18px}
+
+/* ---------- приложение ---------- */
+#screen-app{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+.app-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:11px;
+  padding:11px 14px;padding-top:calc(11px + env(safe-area-inset-top));
+  background:var(--glass);border-bottom:1px solid var(--glass-border);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
+.avatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+  font-weight:600;font-size:15px;background:var(--accent-soft);color:var(--accent-deep);
+  flex:none;overflow:hidden}
+.avatar.me{background:var(--accent-btn);color:#fff}
+.avatar.sm{width:34px;height:34px;font-size:14px}
+.app-me{min-width:0;flex:1}
+.app-name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-phone{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.icon-btn{border:1px solid var(--line);background:transparent;border-radius:10px;
+  width:36px;height:36px;display:grid;place-items:center;color:var(--text-2);flex:none}
+.tab{padding:16px 14px}
+.tab-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px}
+.tab-head h2{font-family:var(--font-serif);font-size:24px;font-weight:600}
+.add-btn{border:0;background:var(--accent-btn);color:#fff;width:38px;height:38px;
+  border-radius:50%;display:grid;place-items:center;flex:none}
+.list{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
+  border-radius:14px;padding:11px 12px;text-align:left;width:100%;transition:background .12s}
+.row:active{background:var(--bg-soft)}
+.row-main{min-width:0;flex:1}
+.row-name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-sub{font-size:12.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-top:2px}
+.row-sub.unread{color:var(--text);font-weight:600}
+.row-top{display:flex;align-items:baseline;gap:8px}
+.row-top .row-name{flex:1}
+.row-when{font-size:11.5px;color:var(--text-3);flex:none;font-variant-numeric:tabular-nums}
+.badge{background:var(--accent-btn);color:#fff;font-size:11.5px;font-weight:700;
+  border-radius:999px;min-width:20px;height:20px;display:grid;place-items:center;padding:0 6px;flex:none}
+.empty{text-align:center;color:var(--text-3);font-size:14px;line-height:1.6;padding:44px 18px}
+.empty .avatar{width:64px;height:64px;margin:0 auto 14px;background:var(--bg-soft);color:var(--text-3)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none}
+.profile-card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:20px;text-align:center;margin-bottom:12px}
+.profile-phone{font-family:var(--font-serif);font-size:26px;font-weight:600;
+  letter-spacing:.04em;font-variant-numeric:tabular-nums;margin:6px 0}
+.profile-note{font-size:12.5px;color:var(--text-3);line-height:1.55;margin:0}
+.btn-glass{background:var(--bg-soft);color:var(--text);border:1px solid var(--line);width:100%}
+.logout-btn{color:var(--red)}
+
+/* ---------- нижняя панель ---------- */
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;
+  padding-bottom:env(safe-area-inset-bottom);
+  background:var(--glass);border-top:1px solid var(--glass-border);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
+.tabbtn{flex:1;border:0;background:transparent;color:var(--text-3);display:flex;
+  flex-direction:column;align-items:center;gap:3px;padding:9px 0 8px;font-size:10.5px;font-weight:600}
+.tabbtn.tab-active{color:var(--accent)}
+.tab-ico{position:relative;display:grid;place-items:center}
+
+/* ---------- переписка ---------- */
+.chat-view{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
+.chat-nav{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  padding-top:calc(9px + env(safe-area-inset-top));
+  background:var(--glass);border-bottom:1px solid var(--glass-border);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
+.chat-nav-back{border:0;background:transparent;color:var(--accent);padding:6px;
+  display:grid;place-items:center;flex:none}
+.chat-nav-info{min-width:0;flex:1}
+.chat-nav-name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-nav-sub{font-size:11.5px;color:var(--text-3)}
+.chat-msgs{flex:1;overflow-y:auto;padding:14px 12px 8px;display:flex;flex-direction:column;gap:3px;
+  -webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.msg{max-width:78%;padding:9px 13px;border-radius:18px;font-size:15px;line-height:1.42;
+  word-break:break-word;white-space:pre-wrap;align-self:flex-start;
+  background:var(--card);border:1px solid var(--line);animation:pop .16s ease-out}
+.msg.me{align-self:flex-end;background:var(--accent-btn);color:#fff;border-color:transparent}
+.msg.pending{opacity:.55}
+.msg.fail{background:var(--red);border-color:transparent}
+@keyframes pop{from{opacity:0;transform:translateY(4px) scale(.985)}to{opacity:1;transform:none}}
+.msg-when{font-size:10.5px;color:var(--text-3);align-self:center;margin:9px 0 4px}
+.composer{display:flex;align-items:flex-end;gap:8px;padding:9px 11px;
+  padding-bottom:calc(9px + env(safe-area-inset-bottom));
+  background:var(--glass);border-top:1px solid var(--glass-border)}
+.composer input{flex:1;padding:11px 14px;border:1px solid var(--line);border-radius:999px;
+  background:var(--card);font-size:16px;outline:none}
+.composer input:focus{border-color:var(--accent)}
+.send-btn{border:0;background:var(--accent-btn);color:#fff;width:42px;height:42px;
+  border-radius:50%;display:grid;place-items:center;flex:none;transition:transform .08s}
+.send-btn:active{transform:scale(.93)}
+
+/* ---------- поиск ---------- */
+.sheet{position:fixed;inset:0;z-index:50;background:rgba(31,30,29,.34);
+  display:flex;align-items:flex-end;animation:fade .14s ease-out}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.sheet-card{width:100%;max-height:82vh;overflow-y:auto;background:var(--card);
+  border-radius:20px 20px 0 0;padding:16px 14px calc(16px + env(safe-area-inset-bottom))}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sheet-head h3{font-family:var(--font-serif);font-size:19px;font-weight:600}
+.search-msg{font-size:13px;color:var(--text-3);margin:10px 0 0;min-height:18px}
+
+/* ---------- входящий звонок ---------- */
+.inc{position:fixed;inset:0;z-index:90;background:rgba(23,22,20,.86);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  display:flex;align-items:center;justify-content:center;padding:24px;animation:fade .14s ease-out}
+.inc-card{width:100%;max-width:340px;background:var(--card);border-radius:22px;
+  padding:26px 20px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.inc-card .avatar{margin:0 auto;background:var(--accent-soft);color:var(--accent-deep)}
+.inc-actions{display:flex;gap:20px;justify-content:center;margin-top:24px}
+.inc-btn{width:64px;height:64px;border-radius:50%;border:0;display:grid;place-items:center;transition:transform .08s}
+.inc-btn:active{transform:scale(.94)}
+.inc-red{background:var(--red)}
+.inc-green{background:var(--green)}
+
+/* ---------- тост ---------- */
+.toast{position:fixed;left:50%;bottom:calc(78px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  background:#2c2b29;color:#fff;font-size:13.5px;padding:10px 16px;border-radius:999px;
+  z-index:80;max-width:88vw;text-align:center;animation:pop .16s ease-out}
+</style>
+</head>
+<body>
+
+<!-- ============ вход ============ -->
+<main id="screen-auth" class="screen">
+  <div class="landing-wrap">
+    <div class="app-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    </div>
+    <p class="micro" data-i18n="tag_micro">Бесплатные сообщения для двоих</p>
+    <h1>KsuNiMeet</h1>
+    <p class="tagline" data-i18n="tagline">Свой номер, контакты и переписка.<br>Сообщения приходят мгновенно.</p>
+
+    <div class="auth-card">
+      <div class="seg">
+        <button id="seg-login" class="seg-btn seg-active" type="button" data-i18n="signin">Вход</button>
+        <button id="seg-signup" class="seg-btn" type="button" data-i18n="signup">Регистрация</button>
+      </div>
+      <p id="auth-hint" class="auth-hint" data-i18n="hint_login">Войдите, чтобы писать по контактам.</p>
+      <input id="auth-user" class="auth-input" placeholder="Имя" maxlength="20"
+             autocomplete="username" autocapitalize="none" spellcheck="false" aria-label="Имя" data-i18n-aria="name_ph">
+      <input id="auth-pass" class="auth-input" placeholder="Пароль" type="password" maxlength="100"
+             autocomplete="current-password" aria-label="Пароль" data-i18n-aria="pass_ph">
+      <button id="auth-submit" class="btn btn-primary" type="button" data-i18n="signin">Войти</button>
+      <p id="auth-err" class="hint"></p>
+    </div>
+
+    <p class="footnote" data-i18n="foot">Работает в России · обычный сайт без туннелей и прокси</p>
+    <button class="lang-pill js-lang" type="button" aria-label="Switch language">EN</button>
+  </div>
+</main>
+
+<!-- ============ приложение ============ -->
+<main id="screen-app" class="screen hidden">
+  <header class="app-top">
+    <div id="app-avatar" class="avatar sm me">K</div>
+    <div class="app-me">
+      <div id="app-name" class="app-name"></div>
+      <div id="app-phone" class="app-phone"></div>
+    </div>
+    <button class="lang-pill js-lang" type="button" aria-label="Switch language">EN</button>
+    <button id="logout-btn" class="icon-btn" type="button" aria-label="Выйти" data-i18n-aria="signout">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    </button>
+  </header>
+
+  <!-- Чаты -->
+  <section id="tab-chats" class="tab">
+    <div class="tab-head">
+      <div><p class="micro" data-i18n="micro_messages">Сообщения</p><h2 data-i18n="chats">Чаты</h2></div>
+      <button id="watch-btn" class="icon-btn" type="button" aria-label="Смотрим вместе" title="Смотрим вместе" data-i18n-aria="watch">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M8 4v16M16 4v16M2 9h20M2 15h20"/></svg>
+      </button>
+      <button id="new-chat-btn" class="add-btn" type="button" aria-label="Новое сообщение" data-i18n-aria="new_message">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      </button>
+    </div>
+    <div id="chats-list" class="list"></div>
+    <div id="chats-empty" class="empty hidden">
+      <div class="avatar">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      </div>
+      <p data-i18n="chats_empty">Сообщений пока нет.<br>Нажмите ✎ и напишите первому.</p>
+    </div>
+  </section>
+
+  <!-- Контакты -->
+  <section id="tab-contacts" class="tab hidden">
+    <div class="tab-head">
+      <div><p class="micro" data-i18n="micro_people">Мои люди</p><h2 data-i18n="contacts">Контакты</h2></div>
+      <button id="add-contact-btn" class="add-btn" type="button" aria-label="Добавить контакт" data-i18n-aria="add_contact">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div id="contacts-list" class="list"></div>
+    <div id="contacts-empty" class="empty hidden">
+      <div class="avatar">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+      </div>
+      <p data-i18n="contacts_empty">Контактов пока нет.<br>Нажмите «+» и найдите человека по имени или номеру.</p>
+    </div>
+  </section>
+
+  <!-- Профиль -->
+  <section id="tab-profile" class="tab hidden">
+    <div class="tab-head"><div><p class="micro" data-i18n="micro_account">Аккаунт</p><h2 data-i18n="profile">Профиль</h2></div></div>
+    <div class="profile-card">
+      <div id="profile-avatar" class="avatar sm me" style="margin:0 auto 10px">K</div>
+      <div id="profile-name" style="font-weight:600;font-size:17px"></div>
+      <div id="profile-phone" class="profile-phone"></div>
+      <button id="profile-copy" class="btn btn-glass" type="button" data-i18n="copy_num">Скопировать номер</button>
+      <p class="profile-note" style="margin-top:12px" data-i18n="profile_note">Это ваш номер в KsuNiMeet. Сообщите его — и вам смогут писать.</p>
+    </div>
+    <button id="watch-btn-2" class="btn btn-glass" type="button" data-i18n="watch" style="margin-bottom:10px">Смотрим вместе</button>
+    <button id="logout-btn-2" class="btn btn-glass logout-btn" type="button" data-i18n="signout">Выйти</button>
+  </section>
+
+  <nav class="tabbar">
+    <button id="tabbtn-chats" class="tabbtn tab-active" type="button">
+      <span class="tab-ico">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        <span id="badge-chats" class="badge hidden" style="position:absolute;top:-5px;right:-8px">0</span>
+      </span>
+      <span data-i18n="chats">Чаты</span>
+    </button>
+    <button id="tabbtn-contacts" class="tabbtn" type="button">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span data-i18n="contacts">Контакты</span>
+    </button>
+    <button id="tabbtn-profile" class="tabbtn" type="button">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+      <span data-i18n="profile">Профиль</span>
+    </button>
+  </nav>
+</main>
+
+<!-- ============ входящий звонок ============ -->
+<div id="incoming" class="inc hidden">
+  <div class="inc-card">
+    <div id="inc-avatar" class="avatar" style="width:76px;height:76px;font-size:30px">?</div>
+    <p class="micro" id="inc-kind" style="margin:12px 0 4px">Входящий звонок</p>
+    <div id="inc-name" style="font-weight:600;font-size:21px"></div>
+    <div id="inc-phone" style="font-size:13px;color:var(--text-3);margin-top:3px"></div>
+    <div class="inc-actions">
+      <button id="inc-decline" class="inc-btn inc-red" type="button" aria-label="Отклонить" data-i18n-aria="decline">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <button id="inc-accept" class="inc-btn inc-green" type="button" aria-label="Ответить" data-i18n-aria="answer">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 2z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ поиск человека ============ -->
+<div id="search-sheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <h3 id="search-title" data-i18n="new_contact">Новый контакт</h3>
+      <button id="search-close" class="icon-btn" type="button" aria-label="Закрыть" data-i18n-aria="close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <input id="search-input" class="auth-input" placeholder="Имя или номер (8 цифр)" autocomplete="off">
+    <div id="search-results" class="list"></div>
+    <p id="search-msg" class="search-msg"></p>
+  </div>
+</div>
+
+<!-- ============ переписка ============ -->
+<div id="chat-view" class="chat-view hidden">
+  <div class="chat-nav">
+    <button id="chat-back" class="chat-nav-back" type="button" aria-label="Назад" data-i18n-aria="back">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div class="avatar sm" id="chat-avatar">K</div>
+    <div class="chat-nav-info">
+      <div class="chat-nav-name" id="chat-nav-name"></div>
+      <div class="chat-nav-sub" id="chat-nav-sub"></div>
+    </div>
+    <button id="call-audio" class="icon-btn" type="button" aria-label="Аудиозвонок" data-i18n-aria="call_audio">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.4 2.1L8.1 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.6 2z"/></svg>
+    </button>
+    <button id="call-video" class="icon-btn" type="button" aria-label="Видеозвонок" data-i18n-aria="call_video">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="13" height="12" rx="3"/><path d="m15 10 7-3v10l-7-3"/></svg>
+    </button>
+  </div>
+  <div id="chat-msgs" class="chat-msgs"></div>
+  <div class="composer">
+    <input id="chat-input" type="text" placeholder="Сообщение" autocomplete="off"
+           enterkeyhint="send" maxlength="2000" aria-label="Сообщение" data-i18n-aria="msg_ph">
+    <button id="chat-send" class="send-btn" type="button" aria-label="Отправить" data-i18n-aria="send">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+    </button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>

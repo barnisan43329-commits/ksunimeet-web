@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#faf9f5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Смотрим вместе · KsuNiMeet</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+:root{
+  --bg:#faf9f5;--bg-soft:#f0eee6;--card:#fff;--line:#e8e4d9;
+  --text:#1f1e1d;--text-2:#5f5e59;--text-3:#666460;
+  --accent:#c96442;--accent-deep:#a9482b;--accent-btn:#bd5230;--accent-soft:#f2e2da;
+  --green:#6d8b58;--red:#bf4d43;
+  --font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --font-serif:"Tiempos Text",ui-serif,Georgia,Cambria,serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);
+  -webkit-font-smoothing:antialiased}
+.hidden{display:none!important}
+button{cursor:pointer}
+input{font:inherit;color-scheme:light}
+.micro{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--text-3)}
+h1,h2{margin:0;font-family:var(--font-serif);font-weight:600}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;
+  padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top));
+  background:rgba(250,249,245,.86);border-bottom:1px solid rgba(31,30,29,.08);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
+.top h1{font-size:19px}
+.top .sub{margin:2px 0 0;font-size:12px;color:var(--text-3)}
+.spacer{flex:1}
+.btn{border:0;border-radius:11px;font-weight:600;font-size:14.5px;padding:12px 18px;
+  transition:transform .08s,background .12s}
+.btn:active{transform:scale(.985)}
+.btn-primary{background:var(--accent-btn);color:#fff}
+.btn-glass{background:var(--bg-soft);color:var(--text);border:1px solid var(--line)}
+.btn:disabled{opacity:.5;pointer-events:none}
+.wrap{max-width:760px;margin:0 auto;padding:16px 14px calc(28px + env(safe-area-inset-bottom))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px}
+.muted{color:var(--text-2);font-size:13.5px;line-height:1.55;margin:8px 0 0}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+@media(max-width:560px){.split{grid-template-columns:1fr}}
+.half{border:1px solid var(--line);border-radius:14px;padding:13px;background:var(--bg)}
+.half p{margin:0 0 9px;font-size:12.5px;color:var(--text-3)}
+.wide{width:100%}
+input.code{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:11px;
+  background:var(--card);font-size:20px;letter-spacing:.22em;text-align:center;
+  text-transform:uppercase;font-weight:600;margin-bottom:9px;outline:none}
+input.code:focus{border-color:var(--accent)}
+.hint{margin:10px 0 0;font-size:13px;color:var(--red);min-height:17px}
+
+/* ---- комната ---- */
+.roomhead{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.codebox{display:flex;align-items:center;gap:8px}
+.code{font-family:var(--font-serif);font-size:30px;font-weight:600;letter-spacing:.14em}
+.copy{border:1px solid var(--line);background:var(--bg);border-radius:9px;
+  padding:6px 10px;font-size:12px;color:var(--text-2)}
+.people{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.person{display:inline-flex;align-items:center;gap:7px;background:var(--bg-soft);
+  border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:600}
+.person .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3)}
+.person.on .dot{background:var(--green)}
+.drift{font-size:12.5px;color:var(--text-2);margin-top:8px;min-height:17px;font-variant-numeric:tabular-nums}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.pill{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:8px 13px;
+  font-size:12.5px;font-weight:600;color:var(--text-2);display:inline-flex;align-items:center;gap:7px}
+.pill.on{background:var(--accent-soft);border-color:transparent;color:var(--accent-deep)}
+.pill.lock{color:var(--text-3)}
+.pick{display:block;position:relative;overflow:hidden}
+.pick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.bar{height:8px;border-radius:999px;background:var(--bg-soft);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;background:var(--accent-btn);transition:width .15s}
+.pct{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;margin:0}
+
+/* ---- плеер ---- */
+.vwrap{position:relative;background:#000;border-radius:14px;overflow:hidden}
+.vwrap video{display:block;width:100%;max-height:70vh;background:#000}
+.lock{position:absolute;left:10px;top:10px;display:inline-flex;align-items:center;gap:6px;
+  background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:600}
+.pcontrols{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.pbtn{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);
+  background:var(--bg);display:grid;place-items:center;color:var(--text);flex:none}
+.seek{flex:1;min-width:120px;accent-color:var(--accent-btn)}
+.t{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;min-width:44px;text-align:center}
+.vol{width:80px;accent-color:var(--accent-btn)}
+.note{font-size:12.5px;color:var(--text-3);margin:10px 0 0;line-height:1.5}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#2c2b29;
+  color:#fff;font-size:13.5px;padding:10px 16px;border-radius:999px;z-index:80;max-width:88vw;text-align:center}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <h1 data-i18n="title">Смотрим вместе</h1>
+    <p class="sub" data-i18n="sub">Фильм у каждого свой локально · управление одно на двоих</p>
+  </div>
+  <span class="spacer"></span>
+  <button class="pill" id="lang" type="button">EN</button>
+  <a class="btn btn-glass" href="./" style="text-decoration:none" data-i18n="back">В приложение</a>
+</header>
+
+<div class="wrap">
+
+  <!-- ===== лобби ===== -->
+  <section id="lobby" class="card">
+    <p class="micro" data-i18n="lobby_micro">Комната для двоих</p>
+    <p class="muted" data-i18n="lobby_text">
+      Хост выбирает фильм — он заливается в комнату по частям. Второй подключается,
+      скачивает тот же файл и смотрит его <strong>локально</strong>: ни буферизации,
+      ни «крутится колёсико». Пауза, перемотка и громкость — общие, а расхождение
+      подбирается скоростью воспроизведения, а не прыжками по фильму.
+    </p>
+    <div class="split">
+      <div class="half">
+        <p data-i18n="im_host">Я хост</p>
+        <button id="create" class="btn btn-primary wide" type="button" data-i18n="create">Создать комнату</button>
+      </div>
+      <div class="half">
+        <p data-i18n="im_guest">Я гость</p>
+        <input id="joincode" class="code" maxlength="5" placeholder="КОД" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" data-i18n-ph="code_ph">
+        <button id="join" class="btn btn-glass wide" type="button" data-i18n="join">Подключиться</button>
+      </div>
+    </div>
+    <p id="lobby-err" class="hint"></p>
+  </section>
+
+  <!-- ===== комната ===== -->
+  <section id="room" class="hidden">
+    <div class="card">
+      <div class="roomhead">
+        <div>
+          <p class="micro" data-i18n="code_micro">Код комнаты</p>
+          <div class="codebox">
+            <span id="rcode" class="code">·····</span>
+            <button id="copy" class="copy" type="button" data-i18n="copy">Скопировать</button>
+          </div>
+          <div id="people" class="people"></div>
+          <p id="drift" class="drift"></p>
+        </div>
+        <span class="spacer"></span>
+        <div class="actions">
+          <button id="grant" class="pill lock" type="button" aria-pressed="false">
+            <span id="grant-label" data-i18n="host_ctrl">Гость не управляет</span>
+          </button>
+          <button id="mic" class="pill" type="button" aria-pressed="false">
+            <span id="mic-label" data-i18n="mic_off">Микрофон выкл</span>
+          </button>
+          <button id="leave" class="btn btn-glass" type="button" data-i18n="leave">Выйти</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- хост: выбор файла -->
+    <div id="pick" class="card hidden">
+      <p class="micro" data-i18n="film_micro">Фильм</p>
+      <p class="muted" style="margin-top:0" data-i18n="pick_text">
+        Лучше всего играет <strong>MP4 (H.264)</strong> или <strong>WebM</strong> — их понимает любой браузер.
+        Файл уходит частями по 45 МБ: переживает обрыв и медленный канал.
+      </p>
+      <label class="btn btn-primary wide pick" style="margin-top:12px;display:block;text-align:center">
+        <span data-i18n="pick_btn">Выбрать файл</span>
+        <input type="file" id="file" accept="video/*,.mkv,.avi,.mov" aria-label="Выбрать файл" data-i18n-aria="pick_btn">
+      </label>
+      <p id="pickname" class="pct" style="margin-top:10px"></p>
+    </div>
+
+    <!-- прогресс -->
+    <div id="status" class="card hidden">
+      <p class="micro" id="status-title" data-i18n="film">Фильм</p>
+      <p id="status-text" class="muted" style="margin-top:0"></p>
+      <div class="bar"><i id="bar"></i></div>
+      <p id="pct" class="pct"></p>
+      <button id="dl" class="btn btn-primary wide hidden" type="button" style="margin-top:12px" data-i18n="dl_btn">Скачать фильм</button>
+    </div>
+
+    <!-- проигрыватель -->
+    <div id="player" class="card hidden">
+      <div class="vwrap">
+        <video id="video" playsinline preload="auto"></video>
+        <span id="plock" class="lock hidden" data-i18n="plock">Управляет хост</span>
+      </div>
+      <div class="pcontrols">
+        <button id="play" class="pbtn" type="button" aria-label="Плей / пауза" data-i18n-aria="play_pause">
+          <svg class="i-play" width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg class="i-pause hidden" width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>
+        </button>
+        <span id="cur" class="t">00:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Перемотка" data-i18n-aria="seek_label">
+        <span id="dur" class="t">00:00</span>
+        <input id="vol" class="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Громкость" data-i18n-aria="volume">
+        <button id="full" class="pbtn" type="button" aria-label="Полный экран" data-i18n-aria="fullscreen">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+      </div>
+      <p id="pnote" class="note"></p>
+    </div>
+  </section>
+</div>
+
+<audio id="remote" autoplay playsinline></audio>
+<div id="toast"></div>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="turn.js"></script>
+<script src="watch.js"></script>
+</body>
+</html>
