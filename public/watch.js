@@ -143,13 +143,19 @@
     realtime: { params: { eventsPerSecond: 20 } }
   });
 
-  var ICE = [{ urls: [
+  var STUN = [{ urls: [
     'stun:stun.cloudflare.com:3478',
     'stun:stun.nextcloud.com:443',
     'stun:stun.syncthing.net:3478',
     'stun:stun.l.google.com:19302',
     'stun:stun1.l.google.com:19302'
-  ] }].concat(window.KSU_TURN_SERVERS || []);
+  ] }];
+
+  /* TURN приезжает из turn.js асинхронно (свежие креды), поэтому соединение
+   * строится после turnReady. Пустой бюджет — ожидания нет. */
+  var TURN = [];
+  var turnReady = (window.KSU_TURN_READY || Promise.resolve(window.KSU_TURN_SERVERS || []))
+    .then(function (l) { TURN = l || []; }, function () { TURN = []; });
 
   var CHUNK = 45 * 1024 * 1024;   // предел бесплатного Supabase — 50 МБ на объект
   var BUCKET = 'ksu-films';
@@ -165,7 +171,7 @@
   var uploading = false, downloading = false;
   var grantOn = false;
   var peerHere = false, peerName = '';
-  var pc = null, dc = null, dcon = false, connected = false;
+  var pc = null, pcBuilding = false, dc = null, dcon = false, connected = false;
   var audioSender = null, silentTrack = null, micTrack = null, silentCtx = null;
   var micOn = false;
   var hostState = null, lastSyncAt = 0;
@@ -793,8 +799,17 @@
     if (!pc) buildPeer();
   }
 
+  /* Сборка отложена до turnReady, поэтому повторный вызов успел бы создать
+   * ВТОРОЙ RTCPeerConnection — держим флаг на время ожидания. */
   function buildPeer() {
-    try { pc = new RTCPeerConnection({ iceServers: ICE, iceCandidatePoolSize: 4 }); }
+    if (pc || pcBuilding) return;
+    pcBuilding = true;
+    turnReady.then(function () { pcBuilding = false; buildPeerNow(); });
+  }
+
+  function buildPeerNow() {
+    if (!me) return;
+    try { pc = new RTCPeerConnection({ iceServers: STUN.concat(TURN), iceCandidatePoolSize: 4 }); }
     catch (e) { pc = null; return; }
 
     // «Тихая» дорожка кладётся в соединение сразу: включение микрофона — это

@@ -94,19 +94,25 @@
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' }
   });
 
-  var ICE = [{ urls: [
+  var STUN = [{ urls: [
     'stun:stun.cloudflare.com:3478',
     'stun:stun.nextcloud.com:443',
     'stun:stun.syncthing.net:3478',
     'stun:stun.l.google.com:19302',
     'stun:stun1.l.google.com:19302'
-  ] }].concat(window.KSU_TURN_SERVERS || []);
+  ] }];
+
+  /* TURN приезжает из turn.js асинхронно (свежие креды), поэтому соединение
+   * строится после turnReady. Пустой бюджет — ожидания нет. */
+  var TURN = [];
+  var turnReady = (window.KSU_TURN_READY || Promise.resolve(window.KSU_TURN_SERVERS || []))
+    .then(function (l) { TURN = l || []; }, function () { TURN = []; });
 
   var me = null;          // {id, username, phone}
   var peer = null;        // профиль собеседника
   var call = null;        // строка calls
   var room = null;        // код комнаты сигналинга
-  var pc = null;
+  var pc = null, pcBuilding = false;
   var localStream = null;
   var micOn = true, camOn = video, facing = 'user';
   var live = false, done = false;
@@ -227,8 +233,17 @@
     });
   }
 
+  /* Сборка отложена до turnReady, поэтому повторный вызов успел бы создать
+   * ВТОРОЙ RTCPeerConnection — держим флаг на время ожидания. */
   function buildPeer(st) {
-    pc = new RTCPeerConnection({ iceServers: ICE, iceCandidatePoolSize: 4 });
+    if (pc || pcBuilding) return;
+    pcBuilding = true;
+    turnReady.then(function () { pcBuilding = false; buildPeerNow(st); });
+  }
+
+  function buildPeerNow(st) {
+    if (done) return;
+    pc = new RTCPeerConnection({ iceServers: STUN.concat(TURN), iceCandidatePoolSize: 4 });
     st.getTracks().forEach(function (t) { pc.addTrack(t, st); });
 
     pc.ontrack = function (ev) {
