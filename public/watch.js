@@ -17,10 +17,21 @@
  *   Прыжок по currentTime остаётся только на аварии (>2 с) и на входе в фильм.
  *
  * КАНАЛ УПРАВЛЕНИЯ: сначала data channel WebRTC (единицы миллисекунд,
- *   напрямую браузер↔браузер), и только если он ещё не поднялся — строка
- *   rooms.sync в базе, на которую подписан Realtime. Обе дороги несут ОДНУ
- *   шкалу времени (часы хоста), поэтому устаревший пакет никогда не откатит
- *   картинку назад.
+ *   напрямую браузер↔браузер), и только если он ещё не поднялся — Broadcast
+ *   в том же Realtime-канале комнаты. Обе дороги несут ОДНУ шкалу времени
+ *   (часы хоста), поэтому устаревший пакет никогда не откатит картинку назад.
+ *
+ * ПОЧЕМУ PRESENCE И BROADCAST, А НЕ ТАБЛИЦЫ + postgres_changes:
+ *   На этом проекте подписка postgres_changes не доставляет НИЧЕГО для таблиц
+ *   с включённым RLS (проверено и для service_role, и с политикой using(true):
+ *   при RLS off события идут, при RLS on — нет). Presence и broadcast той же
+ *   Realtime-службы работают исправно и не проходят через проверку строк по
+ *   RLS. Поэтому «кто здесь» держит Presence, а пульт — broadcast, и ничего
+ *   не зависит от доставки строк из БД.
+ *
+ *   Единственное, что по-прежнему ходит через REST, — что именно за фильм
+ *   лежит в комнате (rooms.movie): это данные, а не события, и у гостя есть
+ *   дешёвый опрос-подстраховка на случай, если broadcast он проспал.
  */
 (function () {
   'use strict';
@@ -28,40 +39,103 @@
   var CFG = window.KSU_CONFIG || {};
   var $ = function (id) { return document.getElementById(id); };
   var q = new URLSearchParams(location.search);
+  var LANG_KEY = 'ksu_lang';
 
   var lang = (function () {
-    try { var s = localStorage.getItem('ksu_lang'); if (s === 'ru' || s === 'en') return s; } catch (e) {}
+    try { var s = localStorage.getItem(LANG_KEY); if (s === 'ru' || s === 'en') return s; } catch (e) {}
     return /^(ru|be|uk|kk)/.test((navigator.language || '').toLowerCase()) ? 'ru' : 'en';
   })();
+
+  /* ВСЕ надписи на экране — здесь. Русский и английский рядом, поэтому
+   * «забыл перевести» ловится глазом: ключ без пары виден сразу. */
   var L = {
     ru: {
-      lobby_err: 'Код комнаты — 5 символов: буквы и цифры.',
-      wait_host: 'Ждём хоста…', host_here: 'Хост в комнате', guest_here: 'Гость в комнате',
+      title: 'Смотрим вместе',
+      sub: 'Фильм у каждого свой локально · управление одно на двоих',
+      back: 'В приложение',
+      lobby_micro: 'Комната для двоих',
+      lobby_text: 'Хост выбирает фильм — он заливается в комнату по частям. Второй подключается, скачивает тот же файл и смотрит его <strong>локально</strong>: ни буферизации, ни «крутится колёсико». Пауза, перемотка и громкость — общие, а расхождение подбирается скоростью воспроизведения, а не прыжками по фильму.',
+      im_host: 'Я хост', create: 'Создать комнату',
+      im_guest: 'Я гость', join: 'Подключиться', code_ph: 'КОД',
+      code_micro: 'Код комнаты', copy: 'Скопировать', leave: 'Выйти',
+      film_micro: 'Фильм', film: 'Фильм',
+      pick_text: 'Лучше всего играет <strong>MP4 (H.264)</strong> или <strong>WebM</strong> — их понимает любой браузер. Файл уходит частями по 45 МБ: переживает обрыв и медленный канал.',
+      pick_btn: 'Выбрать файл', dl_btn: 'Скачать фильм', plock: 'Управляет хост',
+      play_pause: 'Плей / пауза', seek_label: 'Перемотка', volume: 'Громкость',
+      fullscreen: 'Полный экран',
+      wait_host: 'Ждём хоста…', wait_guest: 'Ждём гостя…',
+      host_here: 'Хост в комнате', guest_here: 'Гость в комнате',
       uploading: 'Заливаю фильм в комнату', ready: 'Фильм готов — гость может скачать',
       downloading: 'Скачиваю фильм', downloaded: 'Фильм скачан — можно смотреть',
       no_file: 'Хост ещё не выбрал фильм.', pick_first: 'Выберите фильм.',
       guest_ctrl: 'Гость управляет', host_ctrl: 'Гость не управляет',
       mic_on: 'Микрофон вкл', mic_off: 'Микрофон выкл',
       synced: 'синхронно', away: 'расхождение', left: 'Собеседник вышел',
-      dl_btn: 'Скачать фильм', copied: 'Код скопирован', leave: 'Выйти',
+      copied: 'Код скопирован', voice: 'Голос',
       not_supported: 'Этот файл браузер проиграть не сможет. Нужен MP4 (H.264) или WebM.',
-      voice: 'Голос', link: 'задержка'
+      lobby_err: 'Код комнаты — 5 символов: буквы и цифры.',
+      no_room: 'Комната не найдена.', own_room: 'Это ваша комната — вы хост.',
+      upload_failed: 'Не удалось залить фильм.', reupload: 'Хост заливает заново…',
+      no_mic: 'Нет доступа к микрофону',
+      of: 'из', parts: 'частей',
+      gb: 'ГБ', mb: 'МБ', kb: 'КБ', by: 'Б'
     },
     en: {
-      lobby_err: 'A room code is 5 characters: letters and digits.',
-      wait_host: 'Waiting for the host…', host_here: 'Host is in the room', guest_here: 'Guest is in the room',
+      title: 'Watch together',
+      sub: 'Each of you plays a local copy · one remote for both',
+      back: 'Back to app',
+      lobby_micro: 'A room for two',
+      lobby_text: 'The host picks a film — it is uploaded to the room in parts. The other one joins, downloads the very same file and plays it <strong>locally</strong>: no buffering, no spinning wheel. Pause, seeking and volume are shared, and drift is corrected with the playback rate rather than by jumping around the film.',
+      im_host: "I'm the host", create: 'Create a room',
+      im_guest: "I'm the guest", join: 'Join', code_ph: 'CODE',
+      code_micro: 'Room code', copy: 'Copy', leave: 'Leave',
+      film_micro: 'Film', film: 'Film',
+      pick_text: 'The safest bet is <strong>MP4 (H.264)</strong> or <strong>WebM</strong> — every browser understands them. The file travels in 45 MB parts, so a dropped connection or a slow link will not kill it.',
+      pick_btn: 'Choose a file', dl_btn: 'Download film', plock: 'Host controls',
+      play_pause: 'Play / pause', seek_label: 'Seek', volume: 'Volume',
+      fullscreen: 'Fullscreen',
+      wait_host: 'Waiting for the host…', wait_guest: 'Waiting for the guest…',
+      host_here: 'Host is in the room', guest_here: 'Guest is in the room',
       uploading: 'Uploading the film', ready: 'Film is ready — the guest can download',
       downloading: 'Downloading the film', downloaded: 'Film downloaded — ready to watch',
       no_file: 'The host has not picked a film yet.', pick_first: 'Pick a film.',
       guest_ctrl: 'Guest controls', host_ctrl: 'Host controls',
       mic_on: 'Mic on', mic_off: 'Mic off',
       synced: 'in sync', away: 'drift', left: 'Peer left',
-      dl_btn: 'Download film', copied: 'Code copied', leave: 'Leave',
+      copied: 'Code copied', voice: 'Voice',
       not_supported: 'The browser cannot play this file. Use MP4 (H.264) or WebM.',
-      voice: 'Voice', link: 'latency'
+      lobby_err: 'A room code is 5 characters: letters and digits.',
+      no_room: 'Room not found.', own_room: 'That is your own room.',
+      upload_failed: 'Upload failed.', reupload: 'Host is re-uploading…',
+      no_mic: 'No microphone access',
+      of: 'of', parts: 'parts',
+      gb: 'GB', mb: 'MB', kb: 'KB', by: 'B'
     }
   };
   function T(k) { return (L[lang] && L[lang][k]) || L.ru[k] || k; }
+
+  /* Надписи, которые живут прямо в разметке: data-i18n / data-i18n-ph /
+   * data-i18n-aria. Так html не приходится держать перевод у себя. */
+  function applyLang() {
+    var i, els;
+    els = document.querySelectorAll('[data-i18n]');
+    for (i = 0; i < els.length; i++) {
+      var k = els[i].getAttribute('data-i18n');
+      if (/text$/.test(k)) els[i].innerHTML = T(k);
+      else els[i].textContent = T(k);
+    }
+    els = document.querySelectorAll('[data-i18n-ph]');
+    for (i = 0; i < els.length; i++) els[i].placeholder = T(els[i].getAttribute('data-i18n-ph'));
+    els = document.querySelectorAll('[data-i18n-aria]');
+    for (i = 0; i < els.length; i++) {
+      var ak = els[i].getAttribute('data-i18n-aria');
+      els[i].setAttribute('aria-label', T(ak));
+      if (els[i].hasAttribute('title')) els[i].setAttribute('title', T(ak));
+    }
+    try { document.documentElement.lang = lang; } catch (e) {}
+    document.title = T('title') + ' · KsuNiMeet';
+    $('lang').textContent = lang === 'ru' ? 'EN' : 'RU';
+  }
 
   if (!CFG.supabaseUrl || !window.supabase) return;
   var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
@@ -87,19 +161,19 @@
   var movie = null;            // rooms.movie
   var localUrl = null;
   var downloadedFor = null;    // id фильма, который уже лежит локально
-  var playerReady = false;
+  var playerReady = false, playerBound = false;
   var uploading = false, downloading = false;
   var grantOn = false;
-  var ctrlN = 0, lastCtrlN = 0;
-  var peers = {};
+  var peerHere = false, peerName = '';
   var pc = null, dc = null, dcon = false, connected = false;
   var audioSender = null, silentTrack = null, micTrack = null, silentCtx = null;
   var micOn = false;
   var hostState = null, lastSyncAt = 0;
   var justJoinedAt = 0;
-  var roomCh = null, peerCh = null;
-  var anchorInt = null, rateInt = null, peopleInt = null;
+  var roomCh = null;
+  var voiceTimers = null, anchorInt = null, rateInt = null, movieInt = null;
   var lastHttpSync = 0;
+  var lastCtrlN = 0;
 
   function nowMs() { return window.performance ? performance.now() : Date.now(); }
   function fmtTime(s) {
@@ -110,10 +184,10 @@
   }
   function fmtBytes(b) {
     b = Number(b) || 0;
-    if (b > 1073741824) return (b / 1073741824).toFixed(2) + ' ГБ';
-    if (b > 1048576) return (b / 1048576).toFixed(1) + ' МБ';
-    if (b > 1024) return (b / 1024).toFixed(0) + ' КБ';
-    return b + ' Б';
+    if (b > 1073741824) return (b / 1073741824).toFixed(2) + ' ' + T('gb');
+    if (b > 1048576) return (b / 1048576).toFixed(1) + ' ' + T('mb');
+    if (b > 1024) return (b / 1024).toFixed(0) + ' ' + T('kb');
+    return b + ' ' + T('by');
   }
   var toastTimer = null;
   function toast(m) {
@@ -125,6 +199,11 @@
   }
   function show(id, on) { var e = $(id); if (e) e.classList.toggle('hidden', !on); }
   function err(m) { $('lobby-err').textContent = m || ''; }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
 
   /* ================= лобби ================= */
 
@@ -149,10 +228,10 @@
     var c = ($('joincode').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (c.length !== 5) { err(T('lobby_err')); return; }
     sb.from('rooms').select('code,host_id').eq('code', c).maybeSingle().then(function (r) {
-      if (r.error || !r.data) { err(lang === 'ru' ? 'Комната не найдена.' : 'Room not found.'); return; }
-      if (r.data.host_id === me.id) { err(lang === 'ru' ? 'Это ваша комната — вы хост.' : 'That is your own room.'); return; }
+      if (r.error || !r.data) { err(T('no_room')); return; }
+      if (r.data.host_id === me.id) { err(T('own_room')); return; }
       code = c; role = 'B';
-      try { history.replaceState({}, {}, '?code=' + c + '&role=B'); } catch (e) {}
+      try { history.replaceState({}, '', '?code=' + c + '&role=B'); } catch (e) {}
       enterRoom();
     });
   }
@@ -162,74 +241,183 @@
     show('room', true);
     $('rcode').textContent = code;
     show('pick', role === 'A');
-    if (role === 'B') show('status', true);
+    show('status', true);
+    $('dl').textContent = T('dl_btn');
 
-    markPeer();
-    subscribeRoom();
-    loadRoom();      // фильм мог быть выбран ДО нашего входа — читаем состояние сразу
-    subscribePeers();
+    startRoom();     // presence + broadcast + REST-подстраховка
     startVoice();
     startAnchor();
     startRateLoop();
-    peopleInt = setInterval(markPeer, 4000);
+    loadMovie();     // фильм мог быть выбран ДО нашего входа
 
-    // Пока файл не готов — у гостя только «ждём»; хост может выбрать сразу.
-    if (role === 'B') $('dl').textContent = T('dl_btn');
-    syncControls();
     justJoinedAt = nowMs();
+    syncControls();
+    renderPeople();
+    renderStatus();
   }
 
-  /* ================= «кто здесь» ================= */
+  /* ================= транспорт комнаты =================
+   * Один канал на всё: presence («кто здесь»), сигналинг WebRTC, пульт и
+   * сообщение о том, какой фильм лежит в комнате. Ключ presence — роль+uid,
+   * поэтому хост и гость не затирают друг друга, даже если это один аккаунт
+   * в двух вкладках. */
 
-  function markPeer() {
-    if (!me || !code) return;
-    sb.from('room_peers').upsert({
-      room_code: code, role: role, user_id: me.id, name: me.username, seen_at: new Date().toISOString()
-    }, { onConflict: 'room_code,role' }).then(function () {}, function () {});
-  }
-
-  function subscribePeers() {
-    peerCh = sb.channel('ksu-peers-' + code)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'room_peers', filter: 'room_code=eq.' + code },
-        function () { loadPeers(); })
-      .subscribe();
-    loadPeers();
-  }
-
-  function loadPeers() {
-    sb.from('room_peers').select('role,name,seen_at,user_id').eq('room_code', code).then(function (r) {
-      peers = {};
-      var fresh = Date.now() - 15000;
-      (r.data || []).forEach(function (p) {
-        if (p.user_id === me.id) return;
-        if (new Date(p.seen_at).getTime() < fresh) return;
-        peers[p.role] = p;
-      });
-      renderPeople();
-      // Хост увидел гостя — сразу отдаём точное состояние, не дожидаясь якоря.
-      if (role === 'A' && peers['B'] && playerReady) pushState();
+  function startRoom() {
+    if (roomCh) { try { sb.removeChannel(roomCh); } catch (e) {} roomCh = null; }
+    roomCh = sb.channel('ksu-room-' + code, {
+      config: { presence: { key: role + ':' + me.id } }
     });
+
+    roomCh
+      .on('presence', { event: 'sync' }, readPresence)
+      .on('presence', { event: 'join' }, readPresence)
+      .on('presence', { event: 'leave' }, readPresence)
+      .on('broadcast', { event: 'movie' }, function (p) {
+        if (role !== 'B' || !p) return;
+        setMovie(p.payload);
+      })
+      .on('broadcast', { event: 'sync' }, function (p) {
+        if (role !== 'B' || !p) return;
+        applySync(p.payload);
+      })
+      .on('broadcast', { event: 'ctrl' }, function (p) {
+        if (role !== 'A' || !p || !p.payload) return;
+        if (p.payload.from !== 'B') return;
+        runCtrl(p.payload);
+      })
+      .on('broadcast', { event: 'grant' }, function (p) {
+        if (role !== 'B' || !p || !p.payload) return;
+        setGrant(!!p.payload.on, true);
+      })
+      .on('broadcast', { event: 'sig' }, function (p) {
+        if (!p || !p.payload) return;
+        onSignal(p.payload);
+      })
+      .on('broadcast', { event: 'need' }, function () {
+        if (role !== 'A') return;
+        pushMovie();
+        if (playerReady) { lastHttpSync = 0; pushState(); }
+        maybeOffer();
+      })
+      .on('broadcast', { event: 'bye' }, function () {
+        toast(T('left'));
+        peerGone();
+      })
+      .subscribe(function (status) {
+        if (status !== 'SUBSCRIBED') return;
+        roomCh.track({ role: role, name: (me && me.username) || '' });
+        readPresence();
+        if (role === 'A') pushMovie();
+      });
+  }
+
+  function send(ev, payload) {
+    if (!roomCh) return;
+    try { roomCh.send({ type: 'broadcast', event: ev, payload: payload || {} }); } catch (e) {}
+  }
+
+  /* «Кто здесь» — по presence-состоянию канала, а не по таблице. Мгновенно,
+   * без опроса, без часов: выход виден сразу, потому что подпись снимается
+   * самим сокетом. */
+  var hadPeer = false, peerGoneTimer = null;
+
+  function readPresence() {
+    var st = (roomCh && roomCh.presenceState && roomCh.presenceState()) || {};
+    var want = role === 'A' ? 'B' : 'A';
+    var found = null;
+    Object.keys(st).forEach(function (k) {
+      (st[k] || []).forEach(function (m) {
+        if (m && m.role === want) found = m;
+      });
+    });
+    peerHere = !!found;
+    peerName = found ? (found.name || '') : '';
+    renderPeople();
+
+    if (peerHere) {
+      if (peerGoneTimer) { clearTimeout(peerGoneTimer); peerGoneTimer = null; }
+      if (role === 'A') {
+        pushMovie();
+        if (playerReady) { lastHttpSync = 0; pushState(); }
+        maybeOffer();
+      } else {
+        send('need', {});
+      }
+      hadPeer = true;
+      return;
+    }
+
+    // Пропажа может быть секундной (сокет переподключается) — не паникуем.
+    if (hadPeer && !peerGoneTimer) {
+      peerGoneTimer = setTimeout(function () {
+        peerGoneTimer = null;
+        if (peerHere) return;
+        hadPeer = false;
+        toast(T('left'));
+        peerGone();
+      }, 2000);
+    }
+  }
+
+  function peerGone() {
+    try { if (dc) dc.close(); } catch (e) {}
+    try { if (pc) pc.close(); } catch (e) {}
+    pc = null; dc = null; dcon = false; connected = false;
+    renderPeople();
+    if (role === 'A') setTimeout(function () { if (!pc) maybeOffer(); }, 800);
   }
 
   function renderPeople() {
     var out = [];
-    var other = peers[role === 'A' ? 'B' : 'A'];
-    if (other) {
+    if (peerHere) {
       out.push('<span class="person on"><span class="dot"></span>' +
-        (role === 'A' ? T('guest_here') : T('host_here')) + ' · ' + esc(other.name || '') + '</span>');
+        (role === 'A' ? T('guest_here') : T('host_here')) +
+        (peerName ? ' · ' + esc(peerName) : '') + '</span>');
     } else {
       out.push('<span class="person"><span class="dot"></span>' +
-        (role === 'A' ? T('guest_here') : T('wait_host')) + '</span>');
+        (role === 'A' ? T('wait_guest') : T('wait_host')) + '</span>');
     }
     if (connected) out.push('<span class="person on"><span class="dot"></span>' + T('voice') + '</span>');
     $('people').innerHTML = out.join('');
   }
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  /* ================= фильм в комнате ================= */
+
+  /* Хост: залить состояние фильма в комнату и сразу сказать об этом гостю. */
+  function pushMovie() {
+    if (role !== 'A' || !movie) return;
+    send('movie', movie);
+  }
+
+  function setMovie(m) {
+    if (!m) return;
+    movie = m;
+    renderStatus();
+    if (movie.status === 'ready') stopMoviePoll();
+  }
+
+  function loadMovie() {
+    sb.from('rooms').select('movie').eq('code', code).maybeSingle().then(function (r) {
+      if (r.error || !r.data) return;
+      var row = r.data;
+      if (row.movie) setMovie(row.movie);
+      else renderStatus();
     });
+  }
+
+  /* Подстраховка гостя: если broadcast проспали (или хост залил фильм до
+   * нашего входа), состояние всё равно подтянется из комнаты. Опрос дешёвый
+   * — одна маленькая строка — и прекращается, как только фильм готов. */
+  function startMoviePoll() {
+    if (movieInt) clearInterval(movieInt);
+    movieInt = setInterval(function () {
+      if (role !== 'B') return;
+      if (movie && movie.status === 'ready') { stopMoviePoll(); return; }
+      loadMovie();
+    }, 3000);
+  }
+  function stopMoviePoll() {
+    if (movieInt) { clearInterval(movieInt); movieInt = null; }
   }
 
   /* ================= заливка фильма (хост) ================= */
@@ -247,9 +435,9 @@
     downloadedFor = id;
     bindPlayer();
 
-    sb.from('rooms').update({ movie: m, sync: null, sync_seq: 0, ctrl: null, ctrl_seq: 0 })
-      .eq('code', code).then(function () {}, function () {});
     movie = m;
+    sb.from('rooms').update({ movie: m }).eq('code', code).then(function () {}, function () {});
+    pushMovie();
     renderStatus();
 
     uploading = true;
@@ -267,6 +455,7 @@
             sent++;
             m.received = Math.min(file.size, sent * CHUNK);
             renderStatus();
+            pushMovie();   // гость видит прогресс, а не «замерло»
           });
         });
       })(i);
@@ -275,16 +464,18 @@
       m.status = 'ready';
       m.received = file.size;
       uploading = false;
-      sb.from('rooms').update({ movie: m }).eq('code', code).then(function () {}, function () {});
       movie = m;
+      sb.from('rooms').update({ movie: m }).eq('code', code).then(function () {}, function () {});
+      pushMovie();
       renderStatus();
       toast(T('ready'));
     }).catch(function (e) {
       uploading = false;
       m.status = 'error';
       movie = m;
+      pushMovie();
       renderStatus();
-      toast((e && e.message) || 'upload failed');
+      toast((e && e.message) || T('upload_failed'));
     });
   }
 
@@ -307,7 +498,7 @@
               got += r.data.size;
               setBar(got / movie.size);
               $('pct').textContent = Math.round((got / movie.size) * 100) + '% · ' +
-                fmtBytes(got) + ' из ' + fmtBytes(movie.size);
+                fmtBytes(got) + ' ' + T('of') + ' ' + fmtBytes(movie.size);
             });
         });
       })(i);
@@ -321,6 +512,7 @@
       $('dl').disabled = false;
       bindPlayer();
       toast(T('downloaded'));
+      send('need', {});   // фильм на месте — просим хоста подвести позицию
     }).catch(function (e) {
       downloading = false;
       $('dl').disabled = false;
@@ -337,32 +529,32 @@
       if (!movie && !localUrl) { show('status', false); return; }
       if (!movie) return;
       show('status', true);
-      $('status-title').textContent = movie.name || 'Фильм';
+      $('status-title').textContent = movie.name || T('film');
       if (movie.status === 'uploading') {
-        $('status-text').textContent = T('uploading') + ' — ' + T('guest_here').toLowerCase() + '.';
+        $('status-text').textContent = T('uploading') + '…';
         setBar(movie.size ? (movie.received || 0) / movie.size : 0);
         $('pct').textContent = Math.round(((movie.received || 0) / (movie.size || 1)) * 100) + '% · ' +
-          fmtBytes(movie.received || 0) + ' из ' + fmtBytes(movie.size || 0);
+          fmtBytes(movie.received || 0) + ' ' + T('of') + ' ' + fmtBytes(movie.size || 0);
       } else if (movie.status === 'ready') {
         $('status-text').textContent = T('ready') + '.';
         setBar(1);
-        $('pct').textContent = fmtBytes(movie.size) + ' · ' + movie.chunks + ' × 45 МБ';
+        $('pct').textContent = fmtBytes(movie.size) + ' · ' + movie.chunks + ' × 45 ' + T('mb');
       } else {
-        $('status-text').textContent = lang === 'ru' ? 'Не удалось залить фильм.' : 'Upload failed.';
+        $('status-text').textContent = T('upload_failed');
       }
       return;
     }
     // гость
     show('status', true);
     if (!movie) {
-      $('status-title').textContent = 'Фильм';
+      $('status-title').textContent = T('film');
       $('status-text').textContent = T('no_file');
       $('pct').textContent = '';
       setBar(0);
       show('dl', false);
       return;
     }
-    $('status-title').textContent = movie.name || 'Фильм';
+    $('status-title').textContent = movie.name || T('film');
     if (movie.status === 'uploading') {
       $('status-text').textContent = T('uploading') + '…';
       setBar(movie.size ? (movie.received || 0) / movie.size : 0);
@@ -379,70 +571,13 @@
       } else if (!downloading) {
         $('status-text').textContent = T('ready') + '.';
         setBar(0);
-        $('pct').textContent = fmtBytes(movie.size) + ' · ' + movie.chunks + ' частей';
+        $('pct').textContent = fmtBytes(movie.size) +
+          (movie.chunks > 1 ? ' · ' + movie.chunks + ' ' + T('parts') : '');
         show('dl', true);
       }
       return;
     }
-    $('status-text').textContent = lang === 'ru' ? 'Хост заливает заново…' : 'Host is re-uploading…';
-  }
-
-  /* ================= подписки на комнату ================= */
-
-  /* Начальное состояние комнаты. Без этого гость, вошедший после того как
-   * хост выбрал фильм, видел пустоту: подписка приносит только НОВЫЕ
-   * изменения, а выбор фильма уже случился. */
-  function loadRoom() {
-    sb.from('rooms').select('movie,sync,ctrl,ctrl_seq').eq('code', code).maybeSingle().then(function (r) {
-      if (r.error || !r.data) return;
-      var row = r.data;
-      if (row.movie !== undefined) { movie = row.movie; renderStatus(); }
-      if (role === 'B' && row.sync) applySync(row.sync);
-      if (row.ctrl_seq) lastCtrlN = Math.max(lastCtrlN, row.ctrl_seq);
-    });
-  }
-
-  function subscribeRoom() {
-    roomCh = sb.channel('ksu-room-' + code)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: 'code=eq.' + code },
-        function (p) {
-          var row = p.new;
-          if (!row) return;
-          if (row.movie !== undefined) { movie = row.movie; renderStatus(); }
-          if (row.ctrl !== undefined && role === 'A') {
-            if (row.ctrl_seq && row.ctrl_seq <= lastCtrlN) { /* эхо своего же */ }
-            else runCtrl(row.ctrl);
-          }
-          if (row.sync && role === 'B') applySync(row.sync);
-          if (role === 'B' && row.ctrl_seq && row.ctrl_seq > lastCtrlN) {
-            // Право управления: гость узнаёт о решении хоста мгновенно.
-          }
-        })
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'room_events', filter: 'room_code=eq.' + code },
-        function (p) {
-          var row = p.new;
-          if (!row || row.sender_id === me.id) return;
-          var pl = row.payload || {};
-          if (row.kind !== 'signal') return;
-          if (pl.kind === 'offer') onOffer(pl);
-          else if (pl.kind === 'answer') onAnswer(pl);
-          else if (pl.kind === 'ice') onIce(pl);
-          else if (pl.kind === 'bye') { toast(T('left')); hardReset(); }
-          else if (pl.kind === 'need') needBack();
-          else if (pl.kind === 'grant') setGrant(!!pl.on, true);
-        })
-      .subscribe();
-  }
-
-  function signal(kind, data) {
-    if (!me) return;
-    var payload = { kind: kind };
-    if (data) for (var k in data) payload[k] = data[k];
-    sb.from('room_events').insert({
-      room_code: code, kind: 'signal', sender_id: me.id, payload: payload
-    }).then(function () {}, function () {});
+    $('status-text').textContent = T('reupload');
   }
 
   /* ================= синхронизация =================
@@ -459,6 +594,7 @@
     var t = Number(v.currentTime || 0);
     var paused = v.paused ? 1 : 0;
     var n = Date.now();
+    var pkt = { a: a, t: +t.toFixed(3), p: paused, q: anchor ? 1 : 0, n: n };
     var open = !!(dc && dc.readyState === 'open');
 
     if (open) {
@@ -467,10 +603,7 @@
     }
     if (!open || n - lastHttpSync > 2500) {
       lastHttpSync = n;
-      sb.from('rooms').update({
-        sync: { a: a, t: +t.toFixed(3), p: paused, q: anchor ? 1 : 0, n: n },
-        sync_seq: (lastSyncAt + 1)
-      }).eq('code', code).then(function () {}, function () {});
+      send('sync', pkt);
     }
   }
 
@@ -479,7 +612,7 @@
   function startAnchor() {
     if (anchorInt) clearInterval(anchorInt);
     anchorInt = setInterval(function () {
-      if (role !== 'A' || !playerReady || !peers['B']) return;
+      if (role !== 'A' || !playerReady || !peerHere) return;
       var v = $('video');
       if (v.paused) return;
       sendSync('play', 1);
@@ -496,7 +629,7 @@
   function applySync(s) {
     if (!s) return;
     var stamp = Number(s.n || 0);
-    if (stamp && stamp <= lastSyncAt) return;   // устаревший пакет не применяем
+    if (stamp && stamp <= lastSyncAt) return;   // устаревший или дубль не применяем
     if (stamp) lastSyncAt = stamp;
 
     var t = Number(s.t) || 0;
@@ -607,40 +740,28 @@
     if (grantOn === !!v) return;
     grantOn = !!v;
     syncControls();
-    if (!quiet && role === 'A') signal('grant', { on: grantOn });
+    if (!quiet && role === 'A') send('grant', { on: grantOn });
   }
 
   function sendCtrl(a) {
     if (!canControl() || !playerReady) return;
     var v = $('video');
-    var t = Number(v.currentTime || 0);
-    var payload = { a: a, t: +t.toFixed(3), p: v.paused ? 1 : 0, n: Date.now() };
-    ctrlN++;
-    lastCtrlN = ctrlN;
-
-    // Гость с правом управления отправляет команду хосту; хост выполняет её
-    // у себя и рассылает обычную синхронизацию — дальше всё как всегда.
-    if (role === 'B') {
-      if (dc && dc.readyState === 'open') {
-        try { dc.send(JSON.stringify({ k: 'c', a: a, t: +t.toFixed(3), p: v.paused ? 1 : 0, n: Date.now() })); }
-        catch (e) {}
-      }
-      sb.from('rooms').update({ ctrl: payload, ctrl_seq: ctrlN }).eq('code', code)
-        .then(function () {}, function () {});
-      return;
-    }
-    // Хост: выполняем у себя и сразу рассылаем.
-    runCtrl({ a: a, t: t, p: v.paused ? 1 : 0, seq: ctrlN });
+    if (role === 'A') { sendSync(a, false); return; }
+    // Гость с правом управления просит хоста: тот выполнит у себя и разошлёт
+    // обычную синхронизацию — дальше всё как всегда.
+    send('ctrl', { from: 'B', a: a, t: +Number(v.currentTime || 0).toFixed(3), p: v.paused ? 1 : 0, n: Date.now() });
   }
 
   function runCtrl(o) {
-    if (!o || !o.seq || o.seq <= lastCtrlN) return;
-    lastCtrlN = o.seq;
+    if (!o) return;
+    var n = Number(o.n) || 0;
+    if (n && n <= lastCtrlN) return;
+    lastCtrlN = n;
     var v = $('video');
-    if (o.a === 'seek') { v.currentTime = Number(o.t) || 0; }
-    else if (o.a === 'play') { v.play().catch(function () {}); }
-    else if (o.a === 'pause') { v.pause(); }
-    if (role === 'A') sendSync(o.a, false);
+    if (o.a === 'seek') v.currentTime = Number(o.t) || 0;
+    else if (o.a === 'play') v.play().catch(function () {});
+    else if (o.a === 'pause') v.pause();
+    sendSync(o.a, false);
   }
 
   /* ================= голос (без «звонка») ================= */
@@ -661,13 +782,15 @@
   }
 
   function startVoice() {
-    if (pc) return;
-    buildPeer();
-    setInterval(function () { if (!pc || connected || dcon) return; if (role === 'A') maybeOffer(); }, 1500);
-    setInterval(function () {
-      if (!pc || connected || dcon) return;
-      if (role === 'B') signal('relay', { kind: 'need' });
-    }, 4000);
+    if (!voiceTimers) {
+      voiceTimers = [
+        // Пока соединение не поднялось, хост раз в 1.5 с пробует предложить SDP.
+        setInterval(function () { if (!pc || connected || dcon) return; if (role === 'A') maybeOffer(); }, 1500),
+        // Гость тем временем напоминает о себе — на случай, если offer потерялся.
+        setInterval(function () { if (!pc || connected || dcon) return; if (role === 'B') send('need', {}); }, 4000)
+      ];
+    }
+    if (!pc) buildPeer();
   }
 
   function buildPeer() {
@@ -690,12 +813,12 @@
       }
     };
     pc.onicecandidate = function (ev) {
-      if (ev.candidate) signal('relay', { kind: 'ice', c: ev.candidate.toJSON() });
+      if (ev.candidate) send('sig', { kind: 'ice', c: ev.candidate.toJSON() });
     };
     pc.onconnectionstatechange = function () {
       connected = !!(pc && pc.connectionState === 'connected');
       renderPeople();
-      if (pc && pc.connectionState === 'failed') hardReset();
+      if (pc && pc.connectionState === 'failed') peerGone();
     };
 
     if (role === 'A') {
@@ -714,15 +837,22 @@
       try { o = JSON.parse(ev.data); } catch (e) { return; }
       if (!o) return;
       if (o.k === 's' && role === 'B') applySync({ a: o.a, t: o.t, p: o.p, q: o.q, n: o.n });
-      else if (o.k === 'c' && role === 'A') runCtrl({ a: o.a, t: o.t, p: o.p, seq: ++ctrlN });
+      else if (o.k === 'c' && role === 'A') runCtrl({ a: o.a, t: o.t, p: o.p, n: o.n });
     };
+  }
+
+  function onSignal(pl) {
+    if (!pl) return;
+    if (pl.kind === 'offer') onOffer(pl);
+    else if (pl.kind === 'answer') onAnswer(pl);
+    else if (pl.kind === 'ice') onIce(pl);
   }
 
   function maybeOffer() {
     if (!pc || role !== 'A' || connected || dcon) return;
     if (pc.signalingState !== 'stable') return;
     pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () {
-      signal('relay', { kind: 'offer', sdp: pc.localDescription.sdp });
+      send('sig', { kind: 'offer', sdp: pc.localDescription.sdp });
     }).catch(function () {});
   }
 
@@ -733,7 +863,7 @@
     }).then(function (a) {
       return pc.setLocalDescription(a);
     }).then(function () {
-      signal('relay', { kind: 'answer', sdp: pc.localDescription.sdp });
+      send('sig', { kind: 'answer', sdp: pc.localDescription.sdp });
     }).catch(function () {});
   }
 
@@ -747,20 +877,6 @@
     pc.addIceCandidate(o.c).catch(function () {});
   }
 
-  function needBack() {
-    if (role !== 'A' || !pc || connected || dcon) return;
-    if (pc.signalingState !== 'stable') { hardReset(); return; }
-    maybeOffer();
-  }
-
-  function hardReset() {
-    try { if (dc) dc.close(); } catch (e) {}
-    try { if (pc) pc.close(); } catch (e) {}
-    pc = null; dc = null; dcon = false; connected = false;
-    renderPeople();
-    if (role === 'A') setTimeout(startVoice, 800);
-  }
-
   function toggleMic() {
     if (micOn) {
       micOn = false;
@@ -772,7 +888,7 @@
         micOn = true;
         if (audioSender) { try { audioSender.replaceTrack(micTrack); } catch (e) {} }
         renderMic();
-      }).catch(function () { toast(lang === 'ru' ? 'Нет доступа к микрофону' : 'No microphone access'); });
+      }).catch(function () { toast(T('no_mic')); });
     }
     renderMic();
   }
@@ -792,6 +908,9 @@
     show('pick', false);
     playerReady = true;
     v.load();
+    if (playerBound) { syncControls(); return; }
+    playerBound = true;
+
     // Гость входит в фильм — подводим позицию один раз.
     if (role === 'B') justJoinedAt = nowMs();
     v.addEventListener('loadedmetadata', function () {
@@ -857,10 +976,15 @@
   });
 
   $('leave').addEventListener('click', function () {
-    try { signal('bye', {}); } catch (e) {}
-    sb.from('room_peers').delete().eq('room_code', code).eq('role', role).then(function () {}, function () {});
+    send('bye', {});
+    leaveRoom();
     location.replace('./');
   });
+
+  function leaveRoom() {
+    try { if (roomCh) sb.removeChannel(roomCh); } catch (e) {}
+    roomCh = null;
+  }
 
   $('create').addEventListener('click', createRoom);
   $('join').addEventListener('click', joinRoom);
@@ -869,13 +993,17 @@
   $('dl').addEventListener('click', downloadFilm);
   $('lang').addEventListener('click', function () {
     lang = lang === 'ru' ? 'en' : 'ru';
-    try { localStorage.setItem('ksu_lang', lang); } catch (e) {}
+    try { localStorage.setItem(LANG_KEY, lang); } catch (e) {}
     location.reload();
   });
 
-  window.addEventListener('pagehide', function () { try { signal('bye', {}); } catch (e) {} });
+  window.addEventListener('pagehide', function () { try { send('bye', {}); leaveRoom(); } catch (e) {} });
 
   /* ================= старт ================= */
+
+  applyLang();
+  startMoviePoll();
+  $('joincode').placeholder = T('code_ph');
 
   sb.auth.getSession().then(function (r) {
     var s = r.data && r.data.session;
@@ -884,7 +1012,6 @@
       .then(function (pr) { me = pr.data || { id: s.user.id, username: '' }; });
   }).then(function () {
     if (!me) return;
-    $('joincode').placeholder = lang === 'ru' ? 'КОД' : 'CODE';
     renderMic();
     if (code && role) enterRoom();
   }).catch(function () { location.replace('./'); });

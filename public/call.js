@@ -3,12 +3,22 @@
  * Механика ровно та же, что была на своём сервере, но без сервера-посредника:
  *   • строка в таблице `calls` — это и «звонок идёт», и «кто звонит», и
  *     «приняли/отклонили/пропустили»; истечение делает сама база (27 с);
- *   • сигналинг WebRTC (offer/answer/ICE) летит через `room_events`, на
- *     который подписан Realtime, — то есть push, а не опрос каждую секунду.
+ *   • сигналинг WebRTC (offer/answer/ICE) летит через Broadcast канала
+ *     комнаты, — то есть push, а не опрос каждую секунду.
  *
- * Почему это «низкая задержка»: и решение о звонке, и обмен SDP/ICE приходят
- * событием, а не следующим тиком опроса. На прежнем сервере между «нажал
- * позвонить» и «у него зазвонило» стоял опрос до 2 с; здесь — один кадр.
+ * ПОЧЕМУ BROADCAST, А НЕ ТАБЛИЦА room_events:
+ *   На этом проекте постгресовые подписки (postgres_changes) не доставляют
+ *   ничего для таблиц с включённым RLS — проверено и с service_role, и с
+ *   политикой using(true): при RLS off события идут, при RLS on молча
+ *   пропадают. Broadcast той же Realtime-службы работает и через проверку
+ *   строк не проходит. Поэтому сигналинг идёт broadcast'ом, а состояние
+ *   звонка и состояние разговора дополнительно перечитываются из `calls`
+ *   раз в 2 с — на случай, если адресат был не в сети в момент рассылки.
+ *
+ * ГОНКА, КОТОРУЮ ЭТО ЗАКРЫВАЕТ: звонящий добавляет дорожки и отправляет
+ * offer сразу, а принимающий подписывается на комнату только после нажатия
+ * «ответить». Раньше offer в этот момент уже улетал (и терялся) — теперь
+ * звонящий повторяет offer, пока не получит answer.
  *
  * Голос/видео идут НАПРЯМУЮ между устройствами (P2P). Если сеть не даст
  * прямой путь, нужен TURN — см. turn.js.
@@ -22,32 +32,60 @@
   var callId = q.get('call') || '';
   var video = q.get('video') === '1';
   var isCaller = q.get('out') === '1';
+  // Трубку могли поднять ЕЩЁ НА ЭКРАНЕ ВХОДЯЩЕГО (в приложении так делает и
+  // нативная активность). Тогда второй вопрос «ответить?» уже лишний.
+  var preAccepted = q.get('accepted') === '1';
+  var LANG_KEY = 'ksu_lang';
 
   var lang = (function () {
-    try { var s = localStorage.getItem('ksu_lang'); if (s === 'ru' || s === 'en') return s; } catch (e) {}
+    try { var s = localStorage.getItem(LANG_KEY); if (s === 'ru' || s === 'en') return s; } catch (e) {}
     return /^(ru|be|uk|kk)/.test((navigator.language || '').toLowerCase()) ? 'ru' : 'en';
   })();
   var L = {
     ru: {
-      calling: 'Вызов…', ringing: 'Звонит…', connecting: 'Соединяемся…',
+      title: 'Звонок', calling: 'Вызов…', ringing: 'Звонит…', connecting: 'Соединяемся…',
       live: 'Соединение установлено', peer: 'Собеседник',
       ended: 'Звонок завершён', missed: 'Пропущенный звонок', declined: 'Звонок отклонён',
       noanswer: 'Не ответили', nosignal: 'Соединение не установилось — возможно, нужен TURN',
       calling_hint: 'Ждём, пока ответят.', ringing_hint: 'Ответить или отклонить.',
-      peer_left: 'Собеседник вышел'
+      peer_left: 'Собеседник вышел',
+      no_media: 'Нет доступа к камере/микрофону',
+      answer: 'Ответить', decline: 'Отклонить', hang_up: 'Завершить',
+      minimize: 'Свернуть в приложение', mute_mic: 'Микрофон',
+      camera: 'Камера', flip_cam: 'Перевернуть камеру'
     },
     en: {
-      calling: 'Calling…', ringing: 'Ringing…', connecting: 'Connecting…',
+      title: 'Call', calling: 'Calling…', ringing: 'Ringing…', connecting: 'Connecting…',
       live: 'Connected', peer: 'Peer',
       ended: 'Call ended', missed: 'Missed call', declined: 'Call declined',
       noanswer: 'No answer', nosignal: 'Could not connect — TURN may be required',
       calling_hint: 'Waiting for an answer.', ringing_hint: 'Answer or decline.',
-      peer_left: 'Peer left'
+      peer_left: 'Peer left',
+      no_media: 'No camera/microphone access',
+      answer: 'Answer', decline: 'Decline', hang_up: 'Hang up',
+      minimize: 'Minimize to the app', mute_mic: 'Microphone',
+      camera: 'Camera', flip_cam: 'Flip camera'
     }
   };
   function T(k) { return (L[lang] && L[lang][k]) || L.ru[k] || k; }
 
+  /* Надписи из разметки: data-i18n / data-i18n-aria. В html перевода нет. */
+  function applyLang() {
+    var i, els;
+    els = document.querySelectorAll('[data-i18n]');
+    for (i = 0; i < els.length; i++) els[i].textContent = T(els[i].getAttribute('data-i18n'));
+    els = document.querySelectorAll('[data-i18n-aria]');
+    for (i = 0; i < els.length; i++) {
+      var k = els[i].getAttribute('data-i18n-aria');
+      els[i].setAttribute('aria-label', T(k));
+      if (els[i].hasAttribute('title')) els[i].setAttribute('title', T(k));
+    }
+    try { document.documentElement.lang = lang; } catch (e) {}
+    document.title = T('title') + ' · KsuNiMeet';
+  }
+
   if (!CFG.supabaseUrl || !window.supabase) {
+    applyLang();
     document.body.innerHTML = '<main><div class="who"><div class="phase">' + T('nosignal') + '</div></div></main>';
     return;
   }
@@ -73,9 +111,9 @@
   var micOn = true, camOn = video, facing = 'user';
   var live = false, done = false;
   var tickInt = null, startedAt = 0;
-  var chRoom = null, chCall = null;
+  var chRoom = null;
   var pendingIce = [];
-  var offerSentAt = 0, politeWait = false;
+  var offerRetryInt = null, callPollInt = null;
 
   function show(id, on) { var e = $(id); if (e) e.classList.toggle('hidden', !on); }
   function setPhase(t) { $('phase').textContent = t || ''; }
@@ -95,18 +133,24 @@
     return ('0' + m).slice(-2) + ':' + ('0' + s).slice(-2);
   }
 
+  function stopTimers() {
+    if (tickInt) { clearInterval(tickInt); tickInt = null; }
+    if (offerRetryInt) { clearInterval(offerRetryInt); offerRetryInt = null; }
+    if (callPollInt) { clearInterval(callPollInt); callPollInt = null; }
+  }
+
   /* ================= завершение ================= */
 
   function finish(reason) {
     if (done) return;
     done = true;
-    if (tickInt) { clearInterval(tickInt); tickInt = null; }
+    stopTimers();
     try { if (pc) pc.close(); } catch (e) {}
     pc = null;
     try { if (localStream) localStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
     localStream = null;
     try { if (chRoom) sb.removeChannel(chRoom); } catch (e) {}
-    try { if (chCall) sb.removeChannel(chCall); } catch (e) {}
+    chRoom = null;
     $('who').classList.add('gone');
     show('phase-live', false);
     show('phase-ring', false);
@@ -124,25 +168,53 @@
   }
 
   function hang() {
-    try {
-      if (call && !done) {
-        var patch = live ? { state: 'ended' } : { state: isCaller ? 'cancelled' : 'declined' };
-        sb.from('calls').update(patch).eq('id', call.id).then(function () {}, function () {});
-      }
-    } catch (e) {}
+    var next = live ? 'ended' : (isCaller ? 'cancelled' : 'declined');
+    try { if (call && !done) setCallState(next); } catch (e) {}
     finish(live ? 'ended' : (isCaller ? 'ended' : 'declined'));
   }
 
-  /* ================= WebRTC ================= */
+  /* ================= сигналинг ================= */
 
   function signal(kind, data) {
-    if (!room || !me) return;
+    if (!room || !chRoom) return;
     var payload = { kind: kind };
     if (data) for (var k in data) payload[k] = data[k];
-    sb.from('room_events').insert({
-      room_code: room, kind: 'signal', sender_id: me.id, payload: payload
-    }).then(function () {}, function () {});
+    try { chRoom.send({ type: 'broadcast', event: 'sig', payload: payload }); } catch (e) {}
   }
+
+  /* Состояние звонка живёт в строке `calls` (её читает и нативный APK, и
+   * входящий экран в приложении). Дополнительно сообщаем о смене по
+   * broadcast — чтобы собеседник узнал мгновенно, а не на следующем тике. */
+  function setCallState(state) {
+    if (!call) return;
+    sb.from('calls').update({ state: state }).eq('id', call.id).then(function () {}, function () {});
+    if (chRoom) {
+      try { chRoom.send({ type: 'broadcast', event: 'state', payload: { state: state } }); } catch (e) {}
+    }
+  }
+
+  function onPeerState(state) {
+    if (!state || done) return;
+    if (state === 'answered') return;   // медиа поднимется сама
+    if (state === 'declined') { finish(isCaller ? 'declined' : 'ended'); return; }
+    if (state === 'cancelled' || state === 'ended' || state === 'missed') {
+      finish(state === 'missed' ? 'missed' : 'ended');
+    }
+  }
+
+  /* Подстраховка: адресат мог быть не в сети в момент broadcast'а, а база
+   * всё помнит. Раз в 2 с, пока звонок не в разговоре, сверяемся со строкой. */
+  function startCallPoll() {
+    if (callPollInt) clearInterval(callPollInt);
+    callPollInt = setInterval(function () {
+      if (done || live || !call) return;
+      sb.from('calls').select('state').eq('id', call.id).maybeSingle().then(function (r) {
+        if (r.data && r.data.state) onPeerState(r.data.state);
+      });
+    }, 2000);
+  }
+
+  /* ================= WebRTC ================= */
 
   function media() {
     var want = { audio: true, video: !!camOn };
@@ -176,6 +248,7 @@
         if (!live) {
           live = true;
           startedAt = Date.now();
+          if (offerRetryInt) { clearInterval(offerRetryInt); offerRetryInt = null; }
           show('phase-ring', false);
           show('phase-live', true);
           setPhase('');
@@ -193,15 +266,22 @@
     };
 
     if (isCaller) {
-      pc.onnegotiationneeded = function () {
-        pc.createOffer().then(function (o) {
-          return pc.setLocalDescription(o);
-        }).then(function () {
-          offerSentAt = Date.now();
-          signal('offer', { sdp: pc.localDescription.sdp });
-        }).catch(function () {});
-      };
+      pc.onnegotiationneeded = function () { maybeOffer(); };
+      // Пока ответа нет — повторяем offer. Принимающий подписывается на
+      // комнату только после «ответить», и первый offer легко улетает в пустоту.
+      offerRetryInt = setInterval(maybeOffer, 2000);
     }
+  }
+
+  function maybeOffer() {
+    if (!pc || !isCaller || done || live) return;
+    if (pc.currentRemoteDescription) return;          // answer уже получен
+    if (pc.signalingState !== 'stable') return;
+    pc.createOffer().then(function (o) {
+      return pc.setLocalDescription(o);
+    }).then(function () {
+      signal('offer', { sdp: pc.localDescription.sdp });
+    }).catch(function () {});
   }
 
   function onOffer(o) {
@@ -233,38 +313,30 @@
     q2.forEach(function (c) { pc.addIceCandidate(c).catch(function () {}); });
   }
 
-  /* ================= подписка на комнату ================= */
+  /* ================= канал комнаты ================= */
 
-  function subscribeRoom() {
+  function openRoom() {
+    if (!room) return;
     chRoom = sb.channel('ksu-call-' + room)
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'room_events', filter: 'room_code=eq.' + room },
-        function (p) {
-          var row = p.new;
-          if (!row || row.sender_id === me.id) return;
-          var pl = row.payload || {};
-          if (row.kind !== 'signal') return;
-          if (pl.kind === 'offer') onOffer(pl);
-          else if (pl.kind === 'answer') onAnswer(pl);
-          else if (pl.kind === 'ice') onIce(pl);
-          else if (pl.kind === 'bye') finish('peer_left');
-        })
-      .subscribe();
-  }
-
-  function subscribeCall() {
-    chCall = sb.channel('ksu-callrow-' + callId)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'calls', filter: 'id=eq.' + callId },
-        function (p) {
-          var row = p.new;
-          if (!row) return;
-          if (row.state === 'ended' || row.state === 'cancelled' || row.state === 'missed'
-              || row.state === 'declined') {
-            finish(row.state === 'missed' ? 'missed' : (row.state === 'declined' ? 'declined' : 'ended'));
-          }
-        })
-      .subscribe();
+      .on('broadcast', { event: 'sig' }, function (p) {
+        var pl = p && p.payload;
+        if (!pl) return;
+        if (pl.kind === 'offer') onOffer(pl);
+        else if (pl.kind === 'answer') onAnswer(pl);
+        else if (pl.kind === 'ice') onIce(pl);
+        else if (pl.kind === 'bye') finish('peer_left');
+      })
+      .on('broadcast', { event: 'state' }, function (p) {
+        if (p && p.payload) onPeerState(p.payload.state);
+      })
+      .on('broadcast', { event: 'ready' }, function () {
+        // Принимающий на связи и ждёт offer — можно предлагать сразу.
+        if (isCaller) maybeOffer();
+      })
+      .subscribe(function (status) {
+        if (status !== 'SUBSCRIBED') return;
+        if (!isCaller) signal('ready', {});
+      });
   }
 
   /* ================= принятие ================= */
@@ -274,23 +346,24 @@
     show('btn-decline', true);
     setNote('');
     setPhase(T('connecting'));
-    sb.from('calls').update({ state: 'answered' }).eq('id', callId).then(function () {}, function () {});
+    setCallState('answered');
     startMedia();
   }
 
   function startMedia() {
     media().then(function (st) {
       buildPeer(st);
-      subscribeRoom();
-      if (!isCaller) {
-        // Гость отвечает — свою сторону SDP отдаст по offer'у от звонящего.
-      }
+      // Принимающий только что вошёл — говорим звонящему, что можно предлагать.
+      if (!isCaller) signal('ready', {});
     }).catch(function () {
-      setPhase(lang === 'ru' ? 'Нет доступа к камере/микрофону' : 'No camera/microphone access');
+      setPhase(T('no_media'));
     });
   }
 
   /* ================= старт ================= */
+
+  applyLang();
+  renderWho();
 
   sb.auth.getSession().then(function (r) {
     var s = r.data && r.data.session;
@@ -307,6 +380,7 @@
       call = r.data;
       if (!call) { setPhase(T('ended')); setTimeout(function () { location.replace('./'); }, 1200); return; }
       video = !!call.video || video;
+      camOn = camOn || video;
       var peerId = call.caller_id === me.id ? call.callee_id : call.caller_id;
       isCaller = call.caller_id === me.id;
       room = call.room_code;
@@ -321,13 +395,24 @@
 
     show('cam-btn', video);
     show('flip-btn', video);
-    subscribeCall();
+    openRoom();
+    startCallPoll();
 
     if (isCaller) {
       show('btn-accept', false);
       show('btn-decline', true);
       setNote(T('calling_hint'));
       setPhase(T('calling'));
+      startMedia();
+    } else if (preAccepted || call.state === 'answered') {
+      // Входящий, по которому уже ответили: сразу поднимаем медиа и идём в
+      // разговор. Правим это и для нативного APK, который помечает звонок
+      // answered до открытия страницы.
+      show('btn-accept', false);
+      show('btn-decline', true);
+      setNote('');
+      setPhase(T('connecting'));
+      setCallState('answered');   // подстраховка: запись должна быть точной
       startMedia();
     } else {
       // Входящий: звоним и показываем «ответить / отклонить». Медиа не трогаем,
@@ -345,10 +430,7 @@
 
   $('btn-accept').addEventListener('click', accept);
   $('btn-decline').addEventListener('click', function () {
-    if (call && !live) {
-      sb.from('calls').update({ state: isCaller ? 'cancelled' : 'declined' }).eq('id', call.id)
-        .then(function () {}, function () {});
-    }
+    if (call && !live) setCallState(isCaller ? 'cancelled' : 'declined');
     finish(isCaller ? 'ended' : 'declined');
   });
   $('hang-btn').addEventListener('click', hang);
@@ -405,5 +487,7 @@
     catch (e) { location.replace('./'); }
   });
 
-  window.addEventListener('pagehide', function () { try { if (!done) signal('bye', {}); } catch (e) {} });
+  window.addEventListener('pagehide', function () {
+    try { if (!done) { signal('bye', {}); setCallState(live ? 'ended' : (isCaller ? 'cancelled' : 'declined')); } } catch (e) {}
+  });
 })();

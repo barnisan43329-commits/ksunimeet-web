@@ -49,7 +49,10 @@
       today: 'сегодня', yesterday: 'Вчера', write: 'Написать', added_short: 'в контактах',
       watch: 'Смотрим вместе', call_audio: 'Аудиозвонок', call_video: 'Видеозвонок',
       incoming_audio: 'Входящий звонок', incoming_video: 'Входящий видеозвонок',
-      answer: 'Ответить', decline: 'Отклонить'
+      answer: 'Ответить', decline: 'Отклонить',
+      name_ph: 'Имя', pass_ph: 'Пароль',
+      add_contact: 'Добавить контакт', send: 'Отправить', close: 'Закрыть', back: 'Назад',
+      title: 'KsuNiMeet — звонки и сообщения'
     },
     en: {
       tag_micro: 'Free messaging for two',
@@ -78,7 +81,10 @@
       today: 'today', yesterday: 'Yesterday', write: 'Message', added_short: 'in contacts',
       watch: 'Watch together', call_audio: 'Voice call', call_video: 'Video call',
       incoming_audio: 'Incoming call', incoming_video: 'Incoming video call',
-      answer: 'Answer', decline: 'Decline'
+      answer: 'Answer', decline: 'Decline',
+      name_ph: 'Name', pass_ph: 'Password',
+      add_contact: 'Add contact', send: 'Send', close: 'Close', back: 'Back',
+      title: 'KsuNiMeet — calls and messages'
     }
   };
 
@@ -105,12 +111,22 @@
         nodes[i].textContent = T(k);
       }
     }
-    $('auth-user').placeholder = lang === 'ru' ? 'Имя' : 'Name';
-    $('auth-pass').placeholder = lang === 'ru' ? 'Пароль' : 'Password';
+    $('auth-user').placeholder = T('name_ph');
+    $('auth-pass').placeholder = T('pass_ph');
     $('search-input').placeholder = T('search_ph');
     $('chat-input').placeholder = T('msg_ph');
     var pills = document.querySelectorAll('.js-lang');
     for (var j = 0; j < pills.length; j++) pills[j].textContent = lang === 'ru' ? 'EN' : 'RU';
+    // Подписи для экранного диктора тоже переводятся: иначе в английском
+    // интерфейсе кнопки вслух назывались бы по-русски.
+    var ars = document.querySelectorAll('[data-i18n-aria]');
+    for (var a = 0; a < ars.length; a++) {
+      var ak = ars[a].getAttribute('data-i18n-aria');
+      ars[a].setAttribute('aria-label', T(ak));
+      if (ars[a].hasAttribute('title')) ars[a].setAttribute('title', T(ak));
+    }
+    try { document.documentElement.lang = lang; } catch (e) {}
+    document.title = T('title');
     if (state.user) { renderMe(); renderChats(); renderContacts(); }
   }
 
@@ -172,6 +188,7 @@
 
   var state = {
     user: null,            // {id, username, phone}
+    lastIncomingId: 0,     // id самого свежего входящего — для контрольного опроса
     contacts: [],          // [{id, username, phone}]
     chats: [],             // [{peer, last, lastAt, unread, lastFromMe}]
     peer: null,            // открытый собеседник
@@ -357,6 +374,7 @@
       if (document.visibilityState !== 'visible' || !state.user) return;
       loadChats();
       if (state.chatOpen && state.peer) loadMessages(state.peer.id, true);
+      checkPendingCall();
     });
   }
 
@@ -442,6 +460,13 @@
             unread: c.unread
           };
         });
+        // Запоминаем самый свежий входящий: опрос сравнивает с ним и молчит,
+        // пока ничего нового не пришло.
+        var maxIn = 0;
+        (r.data || []).forEach(function (m) {
+          if (m.recipient_id === me && Number(m.id) > maxIn) maxIn = Number(m.id);
+        });
+        if (maxIn > state.lastIncomingId) state.lastIncomingId = maxIn;
         renderChats();
       });
   }
@@ -614,6 +639,7 @@
       .then(function (r) {
         if (r.error) throw r.error;
         settle(temp.id, r.data);
+        ping(peerId, 'msg');   // будим собеседника: пусть сходит и перечитает
       })
       .catch(function () {
         fail(temp.id);
@@ -672,40 +698,110 @@
     renderChats();
   }
 
-  /* ================= realtime ================= */
+  /* ================= realtime =================
+   *
+   * ПОЧЕМУ НЕ postgres_changes: на этом проекте постгресовые подписки не
+   * доставляют ничего для таблиц с включённым RLS. Проверено трижды — и для
+   * anon, и для service_role, и с открытой политикой using(true): при RLS off
+   * события приходят, при RLS on исчезают молча (сокет подписывается, и тишина).
+   * Поэтому «живость» держится на broadcast, который через проверку строк не
+   * проходит вообще и работает исправно.
+   *
+   * ПИНГ — ЭТО БУДИЛЬНИК, А НЕ ДАННЫЕ. Он ничего не сообщает по существу:
+   * ни текста, ни имён, ни номера. Он говорит ровно одно — «сходи перечитай».
+   * Всё настоящее приходит из REST, где RLS решает, что мне видно. Поэтому
+   * подделанный (или чужой) пинг не может показать чужие сообщения и не может
+   * поднять фальшивый звонок: пока в `calls` нет реальной строки со мной в
+   * роли принимающего, экран входящего не появится.
+   *
+   * Основной путь — пинг; раз в 5 с есть и контрольный пересмотр (limit 1),
+   * чтобы ничего не потерялось, если вкладка спала или пинг ушёл в пустоту.
+   */
 
   var channel = null;
+  var peerChans = {};   // peerId -> { ch: канал собеседника, joined, queue }
+
+  function userChannel(uid) { return 'ksu-user-' + uid; }
+
+  function fire(ch, payload) {
+    try { ch.send({ type: 'broadcast', event: 'ping', payload: payload }); } catch (e) {}
+  }
+
+  /* Собеседник слушает СВОЙ канал, поэтому, чтобы ему постучать, нужно быть
+   * подписанным на его канал. Подписка делается один раз на человека и
+   * живёт до выхода; пинги, отправленные до подписки, копятся в очереди. */
+  function ping(peerId, kind) {
+    if (!state.user || !peerId || peerId === state.user.id) return;
+    var payload = { to: peerId, from: state.user.id, kind: kind || 'msg', at: Date.now() };
+    var rec = peerChans[peerId];
+    if (!rec) {
+      rec = peerChans[peerId] = { ch: null, joined: false, queue: [] };
+      rec.ch = sb.channel(userChannel(peerId)).subscribe(function (s) {
+        if (s === 'SUBSCRIBED') {
+          rec.joined = true;
+          var q2 = rec.queue; rec.queue = [];
+          q2.forEach(function (p) { fire(rec.ch, p); });
+        } else if (s === 'CLOSED' || s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') {
+          rec.joined = false;
+        }
+      });
+    }
+    if (rec.joined) fire(rec.ch, payload);
+    else {
+      rec.queue.push(payload);
+      if (rec.queue.length > 20) rec.queue.shift();
+    }
+  }
+
   function subscribe() {
-    if (channel) { try { sb.removeChannel(channel); } catch (e) {} }
-    channel = sb.channel('ksu-messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, onRow)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, onRow)
+    if (!state.user) return;
+    if (channel) { try { sb.removeChannel(channel); } catch (e) {} channel = null; }
+    channel = sb.channel(userChannel(state.user.id))
+      .on('broadcast', { event: 'ping' }, function (p) {
+        var pl = p && p.payload;
+        if (!pl || !state.user || pl.to !== state.user.id) return;
+        onPing(pl);
+      })
       .subscribe();
   }
 
-  function onRow(payload) {
-    var m = payload.new;
-    if (!m || !state.user) return;
-    var me = state.user.id;
-    if (m.sender_id !== me && m.recipient_id !== me) return; // чужие строки сюда не попадут (RLS)
-
-    var peerId = m.sender_id === me ? m.recipient_id : m.sender_id;
-    var open = state.chatOpen && state.peer && state.peer.id === peerId;
-
-    if (payload.eventType === 'UPDATE') {
-      for (var i = 0; i < state.msgs.length; i++) {
-        if (state.msgs[i].id === m.id) { state.msgs[i] = m; break; }
-      }
-      return;
+  function onPing(pl) {
+    if (!state.user) return;
+    if (pl.kind === 'call') { checkPendingCall(); return; }
+    if (state.chatOpen && state.peer && (!pl.from || state.peer.id === pl.from)) {
+      loadNewMessages(state.peer.id);
+      markRead(state.peer.id);
+    } else {
+      loadChats();
     }
-    if (state.seen[m.id]) { upsertChat(peerId, m, m.sender_id === me); return; }
+  }
 
-    if (open) {
-      appendOne(m);
-      markRead(peerId);
-    }
-    upsertChat(peerId, m, m.sender_id === me);
-    if (m.sender_id !== me && !open) toast(peerOf(peerId).username + ': ' + m.body.slice(0, 60));
+  /* Дочитать только то, чего ещё нет в ленте. Полная перезагрузка переписки
+   * на каждое входящее сдвигала бы прокрутку и мигала. */
+  function loadNewMessages(peerId) {
+    if (!state.user) return Promise.resolve();
+    var maxId = 0;
+    state.msgs.forEach(function (m) {
+      var n = Number(m.id);
+      if (isFinite(n) && n > maxId) maxId = n;
+    });
+    var query = sb.from('messages')
+      .select('id,sender_id,recipient_id,body,created_at,read_at')
+      .eq('chat_key', chatKey(state.user.id, peerId))
+      .order('id', { ascending: true })
+      .limit(60);
+    if (maxId) query = query.gt('id', maxId);
+    return query.then(function (r) {
+      if (r.error) return;
+      var added = 0;
+      (r.data || []).forEach(function (m) {
+        if (state.seen[m.id]) return;
+        appendOne(m);
+        upsertChat(peerId, m, m.sender_id === state.user.id);
+        added++;
+      });
+      if (added) scrollBottom(false);
+    });
   }
 
   /* ================= поиск ================= */
@@ -840,6 +936,10 @@
 
   function signOut() {
     if (channel) { try { sb.removeChannel(channel); } catch (e) {} channel = null; }
+    Object.keys(peerChans).forEach(function (k) {
+      try { sb.removeChannel(peerChans[k].ch); } catch (e) {}
+    });
+    peerChans = {};
     bridge('disable');   // вышли — фоновый опрос больше не нужен
     sb.auth.signOut().then(showAuth, showAuth);
   }
@@ -860,11 +960,13 @@
 
   /* ================= звонки и «Смотрим вместе» =================
    *
-   * Исходящий звонок — строка в `calls`; входящий приходит событием
-   * Realtime, без опроса. Решение (ответить/отклонить) пишется в ту же
-   * строку, поэтому у звонящего состояние меняется мгновенно.
+   * Исходящий звонок — строка в `calls`. О входящем узнаём пингом по
+   * broadcast'у (та же дорога, что и у сообщений), плюс контрольный пересмотр
+   * таблицы раз в 4 с — на случай, если пинг не дошёл, пока вкладка спала.
+   * Решение (ответить/отклонить) пишется в ту же строку, поэтому у звонящего
+   * состояние меняется мгновенно.
    */
-  var callSub = null;
+  var callPollInt = null, syncInt = null;
 
   function randomCode() {
     var a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', s = '';
@@ -880,7 +982,11 @@
       video: !!withVideo, room_code: room
     }).select('id').then(function (r) {
       if (r.error || !r.data || !r.data[0]) { toast(r.error ? r.error.message : T('err_net')); return; }
-      location.href = 'call.html?call=' + encodeURIComponent(r.data[0].id) + '&out=1&video=' + (withVideo ? 1 : 0);
+      // Строка уже есть — стучим получателю, и только потом уходим на экран
+      // звонка: уходя сразу, мы бы оборвали отправку пинга на полуслове.
+      ping(peer.id, 'call');
+      var url = 'call.html?call=' + encodeURIComponent(r.data[0].id) + '&out=1&video=' + (withVideo ? 1 : 0);
+      setTimeout(function () { location.href = url; }, 250);
     });
   }
 
@@ -917,7 +1023,7 @@
     ringCall = null;
     $('incoming').classList.add('hidden');
     if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
-    try { document.title = 'KsuNiMeet — звонки и сообщения'; } catch (e) {}
+    try { document.title = T('title'); } catch (e) {}
     try { if (window.KsuNiMeet && window.KsuNiMeet.inCall) window.KsuNiMeet.inCall(false); } catch (e) {}
   }
 
@@ -943,50 +1049,69 @@
 
   $('inc-accept').addEventListener('click', function () {
     if (!ringCall) return;
-    var id = ringCall.id;
+    // Снимаем ВСЁ, что нужно, ДО hideIncoming(): он обнуляет ringCall, и
+    // обращение к ringCall.video после него — это TypeError, из-за которого
+    // «ответить» вообще не срабатывало (звонок так и оставался ringing).
+    var id = ringCall.id, caller = ringCall.caller_id, withVideo = !!ringCall.video;
     hideIncoming();
-    location.href = 'call.html?call=' + encodeURIComponent(id) + '&video=' + (ringCall.video ? 1 : 0);
+    ping(caller, 'call');   // звонящий сразу видит, что трубку подняли
+    // accepted=1 — чтобы на экране звонка не спрашивали «ответить?» второй раз.
+    var url = 'call.html?call=' + encodeURIComponent(id) + '&video=' + (withVideo ? 1 : 0) + '&accepted=1';
+    // Уходим на экран звонка ТОЛЬКО после того, как запись состояния дошла.
+    // Раньше переход стоял следующей строкой и обрывал летящий PATCH: звонок
+    // так и оставался ringing, а база через 27 с объявляла его пропущенным.
+    var jumped = false;
+    var go = function () { if (jumped) return; jumped = true; location.href = url; };
+    sb.from('calls').update({ state: 'answered' }).eq('id', id).then(go, go);
+    setTimeout(go, 400);
   });
 
   $('inc-decline').addEventListener('click', function () {
     if (!ringCall) return;
-    var id = ringCall.id;
+    var id = ringCall.id, caller = ringCall.caller_id;
     hideIncoming();
     sb.from('calls').update({ state: 'declined' }).eq('id', id).then(function () {}, function () {});
+    ping(caller, 'call');
   });
 
+  /* Входящий звонок: пинг приходит мгновенно, а этот сторож ещё и сверяется
+   * с таблицей — он же гасит экран, если звонок отменили или он истёк. */
   function subscribeCalls() {
-    if (callSub || !state.user) return;
-    callSub = sb.channel('ksu-calls')
-      .on('postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'calls', filter: 'callee_id=eq.' + state.user.id },
-        function (p) {
-          var c = p.new;
-          if (!c || c.state !== 'ringing') return;
-          if (ringCall) return;   // уже показываем другой
-          showIncoming(c);
-        })
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'calls', filter: 'id=eq.' + (ringCall ? ringCall.id : '00000000-0000-0000-0000-000000000000') },
-        function (p) {
-          var c = p.new;
-          if (!c || !ringCall || c.id !== ringCall.id) return;
-          if (c.state !== 'ringing') hideIncoming();
-        })
-      .subscribe();
+    if (!state.user) return;
+    checkPendingCall();
+    if (callPollInt) clearInterval(callPollInt);
+    callPollInt = setInterval(checkPendingCall, 4000);
   }
 
-  /* Звонок мог начаться, пока мы были на другой вкладке, — проверяем один
-   * раз при входе, чтобы не пропустить свежий вызов. */
+  /* Звонок мог начаться, пока мы были на другой вкладке. Смотрим не только
+   * «есть ли свежий вызов», но и не пропала ли труба у того, что уже показываем. */
   function checkPendingCall() {
     if (!state.user) return;
     sb.from('calls').select('id,caller_id,video,state,created_at')
       .eq('callee_id', state.user.id).eq('state', 'ringing')
       .order('created_at', { ascending: false }).limit(1).then(function (r) {
         var c = r.data && r.data[0];
-        if (!c) return;
-        if (Date.now() - new Date(c.created_at).getTime() > 27000) return;  // уже истёк
+        if (!c) { if (ringCall) hideIncoming(); return; }
+        if (Date.now() - new Date(c.created_at).getTime() > 27000) {  // уже истёк
+          if (ringCall && ringCall.id === c.id) hideIncoming();
+          return;
+        }
         if (!ringCall) showIncoming(c);
+      });
+  }
+
+  /* Контрольный опрос сообщений: один лёгкий запрос (limit 1) раз в 5 с.
+   * Если id самого свежего входящего не изменился — дальше не идём, ничего
+   * не перечитываем. Это страховка на случай спящей вкладки, а не основной путь. */
+  function pollIncoming() {
+    if (!state.user || document.visibilityState !== 'visible') return;
+    sb.from('messages').select('id').eq('recipient_id', state.user.id)
+      .order('id', { ascending: false }).limit(1).then(function (r) {
+        var id = r.data && r.data[0] && Number(r.data[0].id);
+        if (!id || id === state.lastIncomingId) return;
+        state.lastIncomingId = id;
+        if (state.chatOpen && state.peer) { loadNewMessages(state.peer.id); markRead(state.peer.id); }
+        else loadChats();
       });
   }
 
@@ -995,7 +1120,8 @@
     if (watchBtnDone) return;
     watchBtnDone = true;
     subscribeCalls();
-    checkPendingCall();
+    if (syncInt) clearInterval(syncInt);
+    syncInt = setInterval(pollIncoming, 5000);
   }
 
   /* ================= старт ================= */

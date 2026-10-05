@@ -97,20 +97,20 @@ input.code:focus{border-color:var(--accent)}
 
 <header class="top">
   <div>
-    <h1>Смотрим вместе</h1>
-    <p class="sub">Фильм у каждого свой локально · управление одно на двоих</p>
+    <h1 data-i18n="title">Смотрим вместе</h1>
+    <p class="sub" data-i18n="sub">Фильм у каждого свой локально · управление одно на двоих</p>
   </div>
   <span class="spacer"></span>
   <button class="pill" id="lang" type="button">EN</button>
-  <a class="btn btn-glass" href="./" style="text-decoration:none">В приложение</a>
+  <a class="btn btn-glass" href="./" style="text-decoration:none" data-i18n="back">В приложение</a>
 </header>
 
 <div class="wrap">
 
   <!-- ===== лобби ===== -->
   <section id="lobby" class="card">
-    <p class="micro">Комната для двоих</p>
-    <p class="muted">
+    <p class="micro" data-i18n="lobby_micro">Комната для двоих</p>
+    <p class="muted" data-i18n="lobby_text">
       Хост выбирает фильм — он заливается в комнату по частям. Второй подключается,
       скачивает тот же файл и смотрит его <strong>локально</strong>: ни буферизации,
       ни «крутится колёсико». Пауза, перемотка и громкость — общие, а расхождение
@@ -118,14 +118,14 @@ input.code:focus{border-color:var(--accent)}
     </p>
     <div class="split">
       <div class="half">
-        <p>Я хост</p>
-        <button id="create" class="btn btn-primary wide" type="button">Создать комнату</button>
+        <p data-i18n="im_host">Я хост</p>
+        <button id="create" class="btn btn-primary wide" type="button" data-i18n="create">Создать комнату</button>
       </div>
       <div class="half">
-        <p>Я гость</p>
+        <p data-i18n="im_guest">Я гость</p>
         <input id="joincode" class="code" maxlength="5" placeholder="КОД" autocomplete="off"
-               autocapitalize="characters" spellcheck="false">
-        <button id="join" class="btn btn-glass wide" type="button">Подключиться</button>
+               autocapitalize="characters" spellcheck="false" data-i18n-ph="code_ph">
+        <button id="join" class="btn btn-glass wide" type="button" data-i18n="join">Подключиться</button>
       </div>
     </div>
     <p id="lobby-err" class="hint"></p>
@@ -136,10 +136,10 @@ input.code:focus{border-color:var(--accent)}
     <div class="card">
       <div class="roomhead">
         <div>
-          <p class="micro">Код комнаты</p>
+          <p class="micro" data-i18n="code_micro">Код комнаты</p>
           <div class="codebox">
             <span id="rcode" class="code">·····</span>
-            <button id="copy" class="copy" type="button">Скопировать</button>
+            <button id="copy" class="copy" type="button" data-i18n="copy">Скопировать</button>
           </div>
           <div id="people" class="people"></div>
           <p id="drift" class="drift"></p>
@@ -147,55 +147,55 @@ input.code:focus{border-color:var(--accent)}
         <span class="spacer"></span>
         <div class="actions">
           <button id="grant" class="pill lock" type="button" aria-pressed="false">
-            <span id="grant-label">Гость не управляет</span>
+            <span id="grant-label" data-i18n="host_ctrl">Гость не управляет</span>
           </button>
           <button id="mic" class="pill" type="button" aria-pressed="false">
-            <span id="mic-label">Микрофон выкл</span>
+            <span id="mic-label" data-i18n="mic_off">Микрофон выкл</span>
           </button>
-          <button id="leave" class="btn btn-glass" type="button">Выйти</button>
+          <button id="leave" class="btn btn-glass" type="button" data-i18n="leave">Выйти</button>
         </div>
       </div>
     </div>
 
     <!-- хост: выбор файла -->
     <div id="pick" class="card hidden">
-      <p class="micro">Фильм</p>
-      <p class="muted" style="margin-top:0">
+      <p class="micro" data-i18n="film_micro">Фильм</p>
+      <p class="muted" style="margin-top:0" data-i18n="pick_text">
         Лучше всего играет <strong>MP4 (H.264)</strong> или <strong>WebM</strong> — их понимает любой браузер.
         Файл уходит частями по 45 МБ: переживает обрыв и медленный канал.
       </p>
       <label class="btn btn-primary wide pick" style="margin-top:12px;display:block;text-align:center">
-        <span>Выбрать файл</span>
-        <input type="file" id="file" accept="video/*,.mkv,.avi,.mov" aria-label="Выбрать файл">
+        <span data-i18n="pick_btn">Выбрать файл</span>
+        <input type="file" id="file" accept="video/*,.mkv,.avi,.mov" aria-label="Выбрать файл" data-i18n-aria="pick_btn">
       </label>
       <p id="pickname" class="pct" style="margin-top:10px"></p>
     </div>
 
     <!-- прогресс -->
     <div id="status" class="card hidden">
-      <p class="micro" id="status-title">Фильм</p>
+      <p class="micro" id="status-title" data-i18n="film">Фильм</p>
       <p id="status-text" class="muted" style="margin-top:0"></p>
       <div class="bar"><i id="bar"></i></div>
       <p id="pct" class="pct"></p>
-      <button id="dl" class="btn btn-primary wide hidden" type="button" style="margin-top:12px">Скачать фильм</button>
+      <button id="dl" class="btn btn-primary wide hidden" type="button" style="margin-top:12px" data-i18n="dl_btn">Скачать фильм</button>
     </div>
 
     <!-- проигрыватель -->
     <div id="player" class="card hidden">
       <div class="vwrap">
         <video id="video" playsinline preload="auto"></video>
-        <span id="plock" class="lock hidden">Управляет хост</span>
+        <span id="plock" class="lock hidden" data-i18n="plock">Управляет хост</span>
       </div>
       <div class="pcontrols">
-        <button id="play" class="pbtn" type="button" aria-label="Плей / пауза">
+        <button id="play" class="pbtn" type="button" aria-label="Плей / пауза" data-i18n-aria="play_pause">
           <svg class="i-play" width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           <svg class="i-pause hidden" width="19" height="19" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>
         </button>
         <span id="cur" class="t">00:00</span>
-        <input id="seek" class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Перемотка">
+        <input id="seek" class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Перемотка" data-i18n-aria="seek_label">
         <span id="dur" class="t">00:00</span>
-        <input id="vol" class="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Громкость">
-        <button id="full" class="pbtn" type="button" aria-label="Полный экран">
+        <input id="vol" class="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Громкость" data-i18n-aria="volume">
+        <button id="full" class="pbtn" type="button" aria-label="Полный экран" data-i18n-aria="fullscreen">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
       </div>
