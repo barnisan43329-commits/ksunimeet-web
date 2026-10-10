@@ -72,7 +72,8 @@ input.code:focus{border-color:var(--accent)}
 .pill.on{background:var(--accent-soft);border-color:transparent;color:var(--accent-deep)}
 .pill.lock{color:var(--text-3)}
 .pick{display:block;position:relative;overflow:hidden}
-.pick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.pick input{position:absolute;top:0;right:0;bottom:0;left:0;opacity:0;width:100%;
+  height:100%;cursor:pointer}
 .bar{height:8px;border-radius:999px;background:var(--bg-soft);overflow:hidden;margin:10px 0 6px}
 .bar i{display:block;height:100%;width:0;background:var(--accent-btn);transition:width .15s}
 .pct{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;margin:0}
@@ -82,36 +83,77 @@ input.code:focus{border-color:var(--accent)}
  * плеера чёрных полос не остаётся ни на телефоне 320 px, ни на 4K-мониторе.
  * Форма берётся у самого файла (--ar из videoWidth/videoHeight), поэтому 4:3,
  * 16:9 и 21:9 выглядят правильно, а поворот экрана и смена размера окна
- * пересчитываются сами — без «угадай ширину под устройство». */
+ * пересчитываются сами — без «угадай ширину под устройство».
+ *
+ * 70dvh рядом с 70vh не для красоты: 70vh — это высота БЕЗ адресной строки,
+ * и на телефоне низ кадра уходил под неё. Первое значение читают старые
+ * WebView, второе — всё остальное. */
 .vwrap{position:relative;background:#000;border-radius:14px;overflow:hidden;width:100%}
-.vwrap video{display:block;width:100%;height:auto;max-height:70vh;background:#000;object-fit:contain}
+.vwrap video{display:block;width:100%;height:auto;max-height:70vh;max-height:70dvh;
+  background:#000;object-fit:contain}
 @supports (aspect-ratio:1){
-  .vwrap{aspect-ratio:var(--ar,1.7778);margin:0 auto;max-width:calc(70vh * var(--ar,1.7778))}
+  .vwrap{aspect-ratio:var(--ar,1.7778);margin:0 auto;
+    max-width:calc(70vh * var(--ar,1.7778));max-width:calc(70dvh * var(--ar,1.7778))}
   .vwrap video{height:100%;max-height:none}
 }
-/* Полный экран — и настоящий (:fullscreen), и запасной ([data-fs]): правила одни
- * и те же, поэтому кадр ложится до края и в браузере, и внутри приложения, где
- * Fullscreen API может быть выключен настройками WebView. */
-.vwrap:fullscreen,.vwrap[data-fs]{position:fixed;inset:0;width:100vw;height:100vh;
-  height:100dvh;max-width:none;max-height:none;aspect-ratio:auto;border-radius:0;
-  margin:0;z-index:60}
+/* Полный экран — и настоящий (:fullscreen), и запасной ([data-fs]).
+ *
+ * ЧЕТЫРЕ ПРИЧИНЫ, ПО КОТОРЫМ ОН ЛОМАЛСЯ НА ПОВОРОТЕ, И ЧТО СДЕЛАНО:
+ *  1) `inset:0` — свойство новое (Chrome 87+). В старом WebView оно просто
+ *     игнорируется, и у коробки вообще нет координат: она остаётся там, где
+ *     стояла в потоке. Пишем четыре стороны по отдельности.
+ *  2) `100vh` — это высота БЕЗ адресной строки, то есть коробка выше экрана и
+ *     низ кадра уезжает под неё (в альбомной ориентации — половина кадра).
+ *     Размер берём у visualViewport: layout.js кладёт его в --ksu-vv-*, а
+ *     здесь он вычитается вместе с вырезом. Запасные значения (100vw/100vh)
+ *     в каждом calc() — на случай, если layout.js не выполнился.
+ *  3) Вырез и домашняя полоса в альбомной ориентации по БОКАМ, а не сверху:
+ *     их вычитают env(safe-area-inset-left/right), иначе кадр под ними.
+ *  4) Поворот не пересчитывал коробку: обработчик звал только setAr().
+ *     Теперь layout.js обновляет переменные сам, на всех событиях смены
+ *     размера, и правила ниже подхватывают это без участия watch.js. */
+.vwrap:fullscreen,.vwrap[data-fs]{position:fixed;top:0;right:0;bottom:0;left:0;
+  width:auto;height:auto;max-width:none;max-height:none;aspect-ratio:auto;
+  border-radius:0;margin:0;z-index:60;background:#000}
+@supports (left:env(safe-area-inset-left)){
+  .vwrap:fullscreen,.vwrap[data-fs]{
+    right:auto;bottom:auto;
+    top:calc(var(--ksu-vv-top,0px) + env(safe-area-inset-top,0px));
+    left:calc(var(--ksu-vv-left,0px) + env(safe-area-inset-left,0px));
+    width:calc(var(--ksu-vv-w,100vw) - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px));
+    height:calc(var(--ksu-vv-h,100vh) - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
+}
 .vwrap:fullscreen video,.vwrap[data-fs] video{width:100%;height:100%;max-width:none;
   max-height:none;object-fit:contain}
 /* «Заполнить экран»: кадр режется до самого края. По умолчанию выключено —
  * целый фильм важнее, чем отсутствие полос. */
 .vwrap.fill video,.vwrap:fullscreen.fill video,.vwrap[data-fs].fill video{object-fit:cover}
-.fsexit{display:none;position:absolute;right:12px;top:calc(12px + env(safe-area-inset-top));
-  z-index:70;width:42px;height:42px;border-radius:50%;border:0;place-items:center;
-  background:rgba(0,0,0,.55);color:#fff}
-.vwrap[data-fs] .fsexit{display:grid}
-.lock{position:absolute;left:10px;top:10px;display:inline-flex;align-items:center;gap:6px;
-  background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:600}
+/* Кнопка выхода есть в ОБОИХ режимах: в запасном полноэкранном и в настоящем.
+ * Раньше она показывалась только по [data-fs], и из настоящего полного экрана
+ * выйти было нечем, кроме системного жеста. */
+.fsexit{display:none;position:absolute;z-index:70;width:42px;height:42px;border-radius:50%;
+  border:0;place-items:center;background:rgba(0,0,0,.55);color:#fff;
+  top:calc(12px + env(safe-area-inset-top,0px));
+  right:calc(12px + env(safe-area-inset-right,0px))}
+.vwrap:fullscreen .fsexit,.vwrap[data-fs] .fsexit{display:grid}
+.lock{position:absolute;display:inline-flex;align-items:center;gap:6px;
+  background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:5px 11px;
+  font-size:12px;font-weight:600;
+  top:calc(10px + env(safe-area-inset-top,0px));
+  left:calc(10px + env(safe-area-inset-left,0px))}
 .pcontrols{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .pbtn{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);
   background:var(--bg);display:grid;place-items:center;color:var(--text);flex:none}
 .seek{flex:1;min-width:120px;accent-color:var(--accent-btn)}
 .t{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;min-width:44px;text-align:center}
 .vol{width:80px;accent-color:var(--accent-btn)}
+/* Подпись под управлением, а не вторая круглая кнопка рядом с «Полный экран»:
+ * две почти одинаковые иконки читаются как два полных экрана. */
+.pfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.vfit{border:1px solid var(--line);background:var(--bg);border-radius:999px;
+  padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--text-2);flex:none}
+.vfit[aria-pressed="true"]{background:var(--accent-soft);border-color:transparent;color:var(--accent-deep)}
+.pfoot .note{margin:0;flex:1;min-width:150px}
 .note{font-size:12.5px;color:var(--text-3);margin:10px 0 0;line-height:1.5}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#2c2b29;
   color:#fff;font-size:13.5px;padding:10px 16px;border-radius:999px;z-index:80;max-width:88vw;text-align:center}
@@ -227,12 +269,14 @@ input.code:focus{border-color:var(--accent)}
         <button id="full" class="pbtn" type="button" aria-label="Полный экран" data-i18n-aria="fullscreen">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
-        <button id="fit" class="pbtn" type="button" aria-pressed="false" data-i18n-aria="fit_screen"
-                aria-label="Заполнить экран">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg>
-        </button>
       </div>
-      <p id="pnote" class="note"></p>
+      <div class="pfoot">
+        <button id="fit" class="vfit" type="button" aria-pressed="false"
+                data-i18n-aria="fit_screen" aria-label="Заполнить экран">
+          <span id="fit-label">Кадр целиком</span>
+        </button>
+        <p id="pnote" class="note"></p>
+      </div>
     </div>
   </section>
 </div>
@@ -241,6 +285,7 @@ input.code:focus{border-color:var(--accent)}
 <div id="toast"></div>
 
 <script src="config.js"></script>
+<script src="layout.js"></script>
 <script src="mirror.js"></script>
 <script src="net.js"></script>
 <script src="vendor/supabase.js"></script>

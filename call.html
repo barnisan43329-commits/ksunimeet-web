@@ -19,13 +19,28 @@
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font-family:var(--font);overflow:hidden;overscroll-behavior:none}
 .hidden{display:none!important}
-main{position:fixed;inset:0;display:flex;flex-direction:column}
+/* Экран звонка во всю видимую область.
+ *
+ * `inset` и `100vh` здесь были самой вероятной причиной «кривой вёрстки» на
+ * слабых телефонах: первое не понимает WebView новее Chrome 87, второе — это
+ * высота БЕЗ адресной строки. Четыре стороны пишем по отдельности, а размеры
+ * берём у visualViewport (layout.js): так экран совпадает с тем, что человек
+ * действительно видит, и в портретной, и в альбомной ориентации. */
+main{position:fixed;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column}
+@supports (left:env(safe-area-inset-left)){
+  main{right:auto;bottom:auto;
+    top:var(--ksu-vv-top,0px);left:var(--ksu-vv-left,0px);
+    width:var(--ksu-vv-w,100vw);height:var(--ksu-vv-h,100vh)}
+}
 
 /* ---------- собеседник ---------- */
-#remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#0f0e0d}
+#remote{position:absolute;top:0;right:0;bottom:0;left:0;width:100%;height:100%;
+  object-fit:cover;background:#0f0e0d}
 #remote:not(.on){opacity:0}
-.who{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:14px;padding:24px;text-align:center;z-index:2}
+.who{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;text-align:center;z-index:2;
+  padding:calc(24px + env(safe-area-inset-top,0px)) calc(24px + env(safe-area-inset-right,0px))
+    calc(24px + env(safe-area-inset-bottom,0px)) calc(24px + env(safe-area-inset-left,0px))}
 .who.gone{opacity:0;pointer-events:none}
 .ava{width:104px;height:104px;border-radius:50%;display:grid;place-items:center;
   background:rgba(255,255,255,.08);border:1px solid var(--line);
@@ -37,20 +52,25 @@ main{position:fixed;inset:0;display:flex;flex-direction:column}
 .net{font-size:12px;color:var(--text-2);opacity:.8;min-height:16px}
 
 /* ---------- своё видео ---------- */
-#local{position:absolute;right:14px;top:calc(14px + env(safe-area-inset-top));
+/* В альбомной ориентации вырез сбоку — без inset-right окошко под ним. */
+#local{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));
+  right:calc(14px + env(safe-area-inset-right,0px));
   width:104px;height:150px;object-fit:cover;border-radius:14px;z-index:3;
   background:#0f0e0d;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.45)}
 #local.flip{transform:scaleX(-1)}
 
 /* ---------- верх ---------- */
-.top{position:absolute;left:0;right:0;top:0;z-index:4;display:flex;align-items:center;
-  gap:10px;padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top))}
+.top{position:absolute;top:0;z-index:4;display:flex;align-items:center;
+  gap:10px;
+  left:env(safe-area-inset-left,0px);right:env(safe-area-inset-right,0px);
+  padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top))}
 .mini{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
   background:rgba(255,255,255,.07);color:var(--text);display:grid;place-items:center}
 .mini[disabled]{opacity:.4}
 
 /* ---------- низ: кнопки ---------- */
-.bottom{position:absolute;left:0;right:0;bottom:0;z-index:4;
+.bottom{position:absolute;bottom:0;z-index:4;
+  left:env(safe-area-inset-left,0px);right:env(safe-area-inset-right,0px);
   padding:18px 16px calc(24px + env(safe-area-inset-bottom));
   display:flex;flex-direction:column;align-items:center;gap:14px;
   background:linear-gradient(to top,rgba(23,22,20,.94),rgba(23,22,20,0))}
@@ -129,6 +149,7 @@ main{position:fixed;inset:0;display:flex;flex-direction:column}
 </main>
 
 <script src="config.js"></script>
+<script src="layout.js"></script>
 <script src="mirror.js"></script>
 <script src="net.js"></script>
 <script src="vendor/supabase.js"></script>
