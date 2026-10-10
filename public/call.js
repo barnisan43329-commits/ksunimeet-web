@@ -91,7 +91,10 @@
   }
 
   var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' }
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' },
+    // Дедлайн и повтор на каждый запрос (net.js) — экран звонка не должен
+    // «висеть» на середине обмена SDP на обрывающемся канале.
+    global: { fetch: (window.KSU_NET && window.KSU_NET.fetch) || undefined }
   });
 
   var STUN = [{ urls: [
