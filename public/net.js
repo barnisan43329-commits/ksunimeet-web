@@ -95,7 +95,6 @@
       offline: 'Нет связи с сервером. Пробуем ещё…',
       retry: 'Повторить',
       slow: 'Медленная связь — сообщения могут приходить с задержкой.',
-      mirror: 'Открыть зеркало',
       checking: 'Проверяем связь…',
       diag: 'Самопроверка',
       app: 'Сайт',
@@ -113,7 +112,6 @@
       offline: 'No connection to the server. Retrying…',
       retry: 'Retry',
       slow: 'Slow connection — messages may arrive late.',
-      mirror: 'Open the mirror',
       checking: 'Checking the connection…',
       diag: 'Self-check',
       app: 'Site',
@@ -382,31 +380,65 @@
     return list;
   }
 
-  /* Выбор адреса. Ждём все пробы, но не дольше PROBE_TIMEOUT: если зеркала
-   * молчат, остаёмся где стоим. Возвращает { origin, why, table }. */
+  /* Выбор адреса. Возвращает { origin, why, table }.
+   *
+   * Сначала — свой адрес, и только потом зеркала, причём не всегда:
+   *
+   *   - свой отвечает быстро и браузер не русский → зеркала не трогаем вовсе.
+   *     Незачем ходить на чужой сервер (и незачем светить себя в логах
+   *     зеркала), если всё и так работает: приоритет России — это про
+   *     российские браузеры, а не про всех подряд;
+   *   - свой молчит или отвечает медленно → ищем живое зеркало;
+   *   - браузер русский → зеркало проверяем всегда, даже когда всё хорошо:
+   *     у него в России выше шансы быть быстрее и живучее.
+   *
+   * Ждём не дольше PROBE_TIMEOUT на адрес: молчащее зеркало — не задержка, а
+   * просто «нет», и человек всё равно остаётся там, где стоит. */
   function choose() {
     var list = origins();
-    var jobs = [];
-    for (var i = 0; i < list.length; i++) jobs.push(probe(list[i]));
+    var mirrors = list.slice(1);
 
-    return Promise.all(jobs).then(function (rows) {
-      var alive = [];
-      for (var i = 0; i < rows.length; i++) if (rows[i].ok) alive.push(rows[i]);
-      alive.sort(function (a, b) { return a.ms - b.ms; });
-
-      var me = rows[0];
-      var best = alive.length ? alive[0] : null;
-      var pick = me, why = 'stay';
-
-      if (!me.ok && best) { pick = best; why = 'current-dead'; }
-      else if (me.ok && best && best.origin !== me.origin) {
-        // Зеркало быстрее. Переходим на него, если браузер русский (приоритет
-        // России) или если своё отвечает заметно медленнее.
-        if (ru) { pick = best; why = 'ru-first'; }
-        else if (best.ms * 1.5 < me.ms) { pick = best; why = 'faster'; }
+    return probe(list[0]).then(function (me) {
+      function stay(why) {
+        st.origin = me.origin;
+        return { origin: me.origin, why: why, mine: me, table: [me] };
       }
-      st.origin = pick.origin;
-      return { origin: pick.origin, why: why, mine: me, table: rows };
+
+      if (me.ok && !ru && me.ms < SLOW_MS) return stay('stay-fast');
+      if (!mirrors.length) return stay(me.ok ? 'single' : 'dead-no-mirrors');
+
+      var jobs = [];
+      for (var i = 0; i < mirrors.length; i++) jobs.push(probe(mirrors[i]));
+
+      return Promise.all(jobs).then(function (rows) {
+        var table = [me].concat(rows);
+
+        // Живые зеркала по возрастанию времени. Именно зеркала, без своего
+        // адреса: при равном времени «лучшим» оказывался бы текущий адрес,
+        // и правило приоритета России не срабатывало бы никогда.
+        var live = [];
+        for (var i = 0; i < rows.length; i++) if (rows[i].ok) live.push(rows[i]);
+        live.sort(function (a, b) { return a.ms - b.ms; });
+
+        var pick = me, why = 'stay';
+
+        if (ru && live.length) {
+          // Российский браузер: идём на зеркало, как только оно ответило.
+          // Смысл именно в этом — зеркало в России живёт своей жизнью и не
+          // зависит от того, как сегодня относятся к GitHub.
+          pick = live[0];
+          why = 'ru-first';
+        } else if (!me.ok && live.length) {
+          pick = live[0];
+          why = 'current-dead';
+        } else if (me.ok && live.length && live[0].ms * 1.5 < me.ms) {
+          pick = live[0];
+          why = 'faster';
+        }
+
+        st.origin = pick.origin;
+        return { origin: pick.origin, why: why, mine: me, table: table };
+      });
     });
   }
 
