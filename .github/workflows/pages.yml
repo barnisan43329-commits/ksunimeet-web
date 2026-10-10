@@ -48,7 +48,7 @@ jobs:
           for f in public/index.html public/app.js public/call.html public/call.js \
                    public/watch.html public/watch.js public/turn.js public/favicon.svg \
                    public/manifest.json public/vendor/supabase.js public/net.js \
-                   public/mirror.js; do
+                   public/mirror.js public/ping.js; do
             test -s "$f" || { echo "MISSING: $f"; exit 1; }
           done
           echo "all assets present"

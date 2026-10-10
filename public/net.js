@@ -324,17 +324,50 @@
     return location.origin + basePath();
   }
 
-  /* Проба: маленький файл со своего адреса. HEAD достаточно — нам нужен не
-   * контент, а «сокет открылся, TLS договорился, сервер ответил». */
+  /* Проба адреса.
+   *
+   * Нужен не «сервер отвечает», а «здесь лежит ИМЕННО это приложение».
+   * На своём же домене когда-то стояла другая версия (PHP-сайт), и она тоже
+   * ответила бы 200 на manifest.json — уехать туда значило бы показать чужой
+   * интерфейс и потерять вход. Поэтому берём ping.js со случайным token в
+   * адресе: он возвращает ровно этот token, а угадать его нельзя.
+   *
+   * <script> вместо fetch — нарочно: скрипту не нужен
+   * Access-Control-Allow-Origin, поэтому зеркалу достаточно просто отдавать
+   * файл. Плюс так проба работает и в старом WebView, где CORS-запрос к чужому
+   * хосту мог упасть до того, как станет ясно, жив адрес или нет. */
   function probe(origin, ms) {
-    var url = origin.replace(/\/+$/, '') + '/manifest.json?ksu=' + nowMs();
-    var started = nowMs();
-    return one(url, { method: 'HEAD', cache: 'no-store', mode: 'cors', credentials: 'omit' }, ms || PROBE_TIMEOUT)
-      .then(function (out) {
-        var spent = nowMs() - started;
-        if (out.res) return { origin: origin, ok: true, ms: spent, status: out.res.status };
-        return { origin: origin, ok: false, ms: null, why: (out.err && out.err.message) || 'no answer' };
-      });
+    return new Promise(function (resolve) {
+      var started = nowMs();
+      var settled = false;
+      var token = 'ksu-' + nowMs() + '-' + Math.floor(Math.random() * 1e9);
+      var s = document.createElement('script');
+
+      function finish(ok, why) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          s.onload = null; s.onerror = null;
+          if (s.parentNode) s.parentNode.removeChild(s);
+        } catch (e) {}
+        try { window.KSU_MIRROR_TAG = ''; } catch (e) {}
+        resolve(ok
+          ? { origin: origin, ok: true, ms: nowMs() - started, status: 200 }
+          : { origin: origin, ok: false, ms: null, why: why });
+      }
+
+      var timer = setTimeout(function () { finish(false, 'timeout ' + (ms || PROBE_TIMEOUT) + 'ms'); }, ms || PROBE_TIMEOUT);
+      s.onload = function () {
+        if (window.KSU_MIRROR_TAG === token) finish(true, '');
+        else finish(false, 'another site at this address');
+      };
+      s.onerror = function () { finish(false, 'no answer'); };
+      s.async = true;
+      try { window.KSU_MIRROR_TAG = ''; } catch (e) {}
+      s.src = origin.replace(/\/+$/, '') + '/ping.js?token=' + encodeURIComponent(token) + '&ksu=' + nowMs();
+      (document.head || document.documentElement).appendChild(s);
+    });
   }
 
   /* Список адресов — в порядке предпочтения. Первым всегда текущий: на нём
@@ -491,6 +524,10 @@
    * скриншотом вместо «не работает».
    */
 
+  function probeApp() {
+    return probe(sameOrigin());
+  }
+
   function probeDb() {
     if (!SB) return Promise.resolve({ name: 'db', ok: false, why: 'config.js пуст' });
     var started = nowMs();
@@ -529,7 +566,7 @@
 
   /* Полная проверка: адрес + база + живые обновления, параллельно. */
   net.probe = function () {
-    return Promise.all([probe(sameOrigin()), probeDb(), probeRt()]).then(function (rows) {
+    return Promise.all([probeApp(), probeDb(), probeRt()]).then(function (rows) {
       var out = { at: new Date().toISOString(), ru: ru, rows: {}, state: state() };
       for (var i = 0; i < rows.length; i++) out.rows[rows[i].name || 'app'] = rows[i];
       return out;
