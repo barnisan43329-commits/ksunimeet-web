@@ -63,6 +63,8 @@
       pick_btn: 'Выбрать файл', dl_btn: 'Скачать фильм', plock: 'Управляет хост',
       play_pause: 'Плей / пауза', seek_label: 'Перемотка', volume: 'Громкость',
       fullscreen: 'Полный экран',
+      fit_screen: 'Заполнить экран', fit_on: 'Кадр режется до края экрана',
+      fit_off: 'Кадр целиком, полосы по краям', fs_exit: 'Выйти из полного экрана',
       wait_host: 'Ждём хоста…', wait_guest: 'Ждём гостя…',
       host_here: 'Хост в комнате', guest_here: 'Гость в комнате',
       uploading: 'Заливаю фильм в комнату', ready: 'Фильм готов — гость может скачать',
@@ -94,6 +96,8 @@
       pick_btn: 'Choose a file', dl_btn: 'Download film', plock: 'Host controls',
       play_pause: 'Play / pause', seek_label: 'Seek', volume: 'Volume',
       fullscreen: 'Fullscreen',
+      fit_screen: 'Fill the screen', fit_on: 'Frame cropped to the screen edges',
+      fit_off: 'Whole frame, bars at the edges', fs_exit: 'Exit fullscreen',
       wait_host: 'Waiting for the host…', wait_guest: 'Waiting for the guest…',
       host_here: 'Host is in the room', guest_here: 'Guest is in the room',
       uploading: 'Uploading the film', ready: 'Film is ready — the guest can download',
@@ -138,9 +142,12 @@
   }
 
   if (!CFG.supabaseUrl || !window.supabase) return;
+  /* Запросы идут через net.js: у каждого свой дедлайн и повтор. На канале,
+   * который рвётся на середине ответа, без этого комната просто «висела». */
   var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' },
-    realtime: { params: { eventsPerSecond: 20 } }
+    realtime: { params: { eventsPerSecond: 20 } },
+    global: { fetch: (window.KSU_NET && window.KSU_NET.fetch) || undefined }
   });
 
   var STUN = [{ urls: [
@@ -931,7 +938,9 @@
     v.addEventListener('loadedmetadata', function () {
       $('dur').textContent = fmtTime(v.duration);
       $('seek').max = v.duration || 0;
+      setAr();
     });
+    setAr();
     v.addEventListener('timeupdate', function () {
       if (v.seeking) return;
       $('cur').textContent = fmtTime(v.currentTime);
@@ -961,14 +970,108 @@
     sendCtrl('seek');
   });
 
-  $('full').addEventListener('click', function () {
-    var w = $('video').parentNode;
-    try {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else if (w.requestFullscreen) w.requestFullscreen();
-      else if (w.webkitRequestFullscreen) w.webkitRequestFullscreen();
-    } catch (e) {}
-  });
+  /* ============ полный экран и точная посадка кадра ============
+   *
+   * Устройства ведут себя по-разному, поэтому путей три:
+   *   1. настоящий Fullscreen API — браузер на компьютере, Chrome на Android;
+   *   2. нативный плеер Safari на iPhone: элемент во весь экран там не
+   *      разворачивается, зато сам <video> умеет webkitEnterFullscreen();
+   *   3. запасной [data-fs] — когда не сработало ни то, ни другое (встроенный
+   *      WebView с выключенным Fullscreen API). Он накрывает вьюпорт теми же
+   *      CSS-правилами, что и настоящий полный экран, — картинка садится
+   *      одинаково, кнопка «Полный экран» перестаёт быть кнопкой-обманкой.
+   *
+   * Ширина кадра выводится из формы самого файла (--ar), поэтому полос внутри
+   * плеера нет ни на 320 px, ни на 4K, а поворот экрана пересчитывается сам.
+   */
+
+  var w = $('vwrap');
+
+  function setAr() {
+    var v = $('video');
+    if (!v || !w) return;
+    var ar = (v.videoWidth && v.videoHeight) ? (v.videoWidth / v.videoHeight) : 0;
+    // Разумные границы: мусорные метаданные не должны ломать вёрстку.
+    if (ar > 0.2 && ar < 6) w.style.setProperty('--ar', ar.toFixed(5));
+  }
+
+  function fsOn() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function pseudo(on) {
+    if (!w) return;
+    if (on) w.setAttribute('data-fs', '1');
+    else w.removeAttribute('data-fs');
+    try { document.documentElement.style.overflow = on ? 'hidden' : ''; } catch (e) {}
+  }
+
+  function exitFs() {
+    if (fsOn()) {
+      try {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } catch (e) {}
+    }
+    pseudo(false);
+  }
+
+  function enterFs() {
+    if (fsOn()) return;
+    var v = $('video');
+    var settled = false;
+    function fallback() {
+      if (settled) return;
+      settled = true;
+      // iPhone: единственный путь — нативный плеер видео.
+      if (v && typeof v.webkitEnterFullscreen === 'function') {
+        try { v.webkitEnterFullscreen(); return; } catch (e) {}
+      }
+      pseudo(true);
+    }
+    if (w && w.requestFullscreen) {
+      try {
+        var p = w.requestFullscreen();
+        if (p && typeof p.catch === 'function') p.catch(fallback);
+      } catch (e) { fallback(); return; }
+      // Настоящий полный экран поднимается мгновенно. Не поднялся за 600 мс —
+      // значит его тут нет, и ждать больше нечего.
+      setTimeout(function () { if (!fsOn()) fallback(); }, 600);
+      return;
+    }
+    fallback();
+  }
+
+  if (w) {
+    $('full').addEventListener('click', function () { if (fsOn() || w.hasAttribute('data-fs')) exitFs(); else enterFs(); });
+    $('fsexit').addEventListener('click', exitFs);
+    // Поворот экрана — это другой вьюпорт: кадр должен лечь заново.
+    window.addEventListener('resize', setAr);
+    window.addEventListener('orientationchange', function () { setTimeout(setAr, 120); });
+    document.addEventListener('fullscreenchange', setAr);
+    document.addEventListener('webkitfullscreenchange', setAr);
+
+    /* «Заполнить экран»: кадр режется до края. По умолчанию выключено —
+     * целый фильм важнее, чем отсутствие полос. Выбор запоминается. */
+    var FIT_KEY = 'ksu_fit';
+    function renderFit() {
+      var on = w.classList.contains('fill');
+      $('fit').classList.toggle('on', on);
+      $('fit').setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    try { if (localStorage.getItem(FIT_KEY) === '1') w.classList.add('fill'); } catch (e) {}
+    renderFit();
+    $('fit').addEventListener('click', function () {
+      var on = !w.classList.contains('fill');
+      w.classList.toggle('fill', on);
+      try { localStorage.setItem(FIT_KEY, on ? '1' : '0'); } catch (e) {}
+      renderFit();
+      toast(on ? T('fit_on') : T('fit_off'));
+    });
+    // Выход из полного экрана кнопкой «назад» на телефоне тоже должен вернуть
+    // страницу в нормальный вид (иначе останется висеть во весь экран).
+    window.addEventListener('popstate', function () { if (w.hasAttribute('data-fs')) exitFs(); });
+  }
 
   $('grant').addEventListener('click', function () {
     if (role !== 'A') return;

@@ -216,7 +216,11 @@
 
   var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' },
-    realtime: { params: { eventsPerSecond: 20 } }
+    realtime: { params: { eventsPerSecond: 20 } },
+    /* Запросы идут через net.js: у каждого есть дедлайн и повтор. На канале,
+     * который рвётся после ~16 КБ (сеть Cloudflare в России), это разница
+     * между «пришло со второго раза» и «нет связи с сервером». */
+    global: { fetch: (window.KSU_NET && window.KSU_NET.fetch) || undefined }
   });
 
   /* Адрес для входа синтезируется из имени: почты у пользователя нет,
@@ -1130,11 +1134,37 @@
   setMode('login');
   wireVisibility();
 
-  // Уже входили раньше? Тогда приложение открывается сразу — без экрана входа.
-  sb.auth.getSession().then(function (r) {
-    var session = r.data && r.data.session;
-    if (!session) { showAuth(); return; }
-    onSignedIn(session).catch(showAuth);
+  /* Уже входили раньше? Тогда приложение открывается сразу — без экрана входа.
+   *
+   * Дедлайн здесь обязателен: без сети `getSession()` не отвечает НИКОГДА,
+   * и человек видит пустую страницу. Через 9 с показываем экран входа и
+   * полоску «нет связи — повторить». Пустая страница не объясняет ничего. */
+  function bootSession() {
+    var req = sb.auth.getSession();
+    if (!window.KSU_NET) {
+      req.then(function (r) {
+        var s = r && r.data && r.data.session;
+        if (!s) { showAuth(); return; }
+        onSignedIn(s).catch(showAuth);
+      }, showAuth);
+      return;
+    }
+    KSU_NET.deadline(req, 9000).then(function (out) {
+      if (out.timedOut) { KSU_NET.retry(); showAuth(); return; }
+      if (!out.ok) { showAuth(); return; }
+      var r = out.value;
+      var session = r && r.data && r.data.session;
+      if (!session) { showAuth(); return; }
+      onSignedIn(session).catch(showAuth);
+    });
+  }
+
+  bootSession();
+  // Кнопка «Повторить» в полоске: связи нет — пробуем ещё раз.
+  window.addEventListener('ksu-net-retry', function () {
+    if (!state.user) bootSession();
+    else if (state.peer) loadNewMessages(state.peer.id);
+    else loadChats();
   });
 
   sb.auth.onAuthStateChange(function (evt, session) {

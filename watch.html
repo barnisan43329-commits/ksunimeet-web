@@ -77,9 +77,33 @@ input.code:focus{border-color:var(--accent)}
 .bar i{display:block;height:100%;width:0;background:var(--accent-btn);transition:width .15s}
 .pct{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;margin:0}
 
-/* ---- плеер ---- */
-.vwrap{position:relative;background:#000;border-radius:14px;overflow:hidden}
-.vwrap video{display:block;width:100%;max-height:70vh;background:#000}
+/* ---- плеер ----
+ * Кадр занимает ровно свою форму. Ширина ограничена высотой, поэтому внутри
+ * плеера чёрных полос не остаётся ни на телефоне 320 px, ни на 4K-мониторе.
+ * Форма берётся у самого файла (--ar из videoWidth/videoHeight), поэтому 4:3,
+ * 16:9 и 21:9 выглядят правильно, а поворот экрана и смена размера окна
+ * пересчитываются сами — без «угадай ширину под устройство». */
+.vwrap{position:relative;background:#000;border-radius:14px;overflow:hidden;width:100%}
+.vwrap video{display:block;width:100%;height:auto;max-height:70vh;background:#000;object-fit:contain}
+@supports (aspect-ratio:1){
+  .vwrap{aspect-ratio:var(--ar,1.7778);margin:0 auto;max-width:calc(70vh * var(--ar,1.7778))}
+  .vwrap video{height:100%;max-height:none}
+}
+/* Полный экран — и настоящий (:fullscreen), и запасной ([data-fs]): правила одни
+ * и те же, поэтому кадр ложится до края и в браузере, и внутри приложения, где
+ * Fullscreen API может быть выключен настройками WebView. */
+.vwrap:fullscreen,.vwrap[data-fs]{position:fixed;inset:0;width:100vw;height:100vh;
+  height:100dvh;max-width:none;max-height:none;aspect-ratio:auto;border-radius:0;
+  margin:0;z-index:60}
+.vwrap:fullscreen video,.vwrap[data-fs] video{width:100%;height:100%;max-width:none;
+  max-height:none;object-fit:contain}
+/* «Заполнить экран»: кадр режется до самого края. По умолчанию выключено —
+ * целый фильм важнее, чем отсутствие полос. */
+.vwrap.fill video,.vwrap:fullscreen.fill video,.vwrap[data-fs].fill video{object-fit:cover}
+.fsexit{display:none;position:absolute;right:12px;top:calc(12px + env(safe-area-inset-top));
+  z-index:70;width:42px;height:42px;border-radius:50%;border:0;place-items:center;
+  background:rgba(0,0,0,.55);color:#fff}
+.vwrap[data-fs] .fsexit{display:grid}
 .lock{position:absolute;left:10px;top:10px;display:inline-flex;align-items:center;gap:6px;
   background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:600}
 .pcontrols{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
@@ -182,9 +206,14 @@ input.code:focus{border-color:var(--accent)}
 
     <!-- проигрыватель -->
     <div id="player" class="card hidden">
-      <div class="vwrap">
+      <div class="vwrap" id="vwrap">
         <video id="video" playsinline preload="auto"></video>
         <span id="plock" class="lock hidden" data-i18n="plock">Управляет хост</span>
+        <button id="fsexit" class="fsexit" type="button" aria-label="Выйти из полного экрана"
+                data-i18n-aria="fs_exit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
       <div class="pcontrols">
         <button id="play" class="pbtn" type="button" aria-label="Плей / пауза" data-i18n-aria="play_pause">
@@ -198,6 +227,10 @@ input.code:focus{border-color:var(--accent)}
         <button id="full" class="pbtn" type="button" aria-label="Полный экран" data-i18n-aria="fullscreen">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         </button>
+        <button id="fit" class="pbtn" type="button" aria-pressed="false" data-i18n-aria="fit_screen"
+                aria-label="Заполнить экран">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg>
+        </button>
       </div>
       <p id="pnote" class="note"></p>
     </div>
@@ -208,6 +241,8 @@ input.code:focus{border-color:var(--accent)}
 <div id="toast"></div>
 
 <script src="config.js"></script>
+<script src="mirror.js"></script>
+<script src="net.js"></script>
 <script src="vendor/supabase.js"></script>
 <script src="turn.js"></script>
 <script src="watch.js"></script>
