@@ -27,12 +27,32 @@ input{font:inherit;color-scheme:light}
 .micro{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.16em;
   text-transform:uppercase;color:var(--text-3)}
 h1,h2{margin:0;font-family:var(--font-serif);font-weight:600}
+/* Шапка ПЕРЕНОСИТСЯ по строкам.
+ *
+ * Было: один ряд без переноса. На 320px (это 303px содержимого — iPhone SE,
+ * старые Android) строка требует минимум 324px: заголовок 90 + «EN» 45 +
+ * «В приложение» 125 + промежутки 36 + поля 28. Лишнее не влезало, и:
+ *  — коробка заголовка сжималась до 93px и вытягивалась в 124px вниз (четыре
+ *    строки текста в колонке шириной в палец),
+ *  — кнопка «В приложение» упиралась в min-content, переносилась на две
+ *    строки (66px высоты) и всё равно вылезала за экран на 10px — страница
+ *    начинала скроллиться вбок,
+ *  — вся шапка раздувалась до 149px.
+ * Теперь: заголовку дана основа 220px, действия лежат справа через
+ * margin-left:auto (а не через flex:1-расширитель — расширитель забирает
+ * свободное место на ТОЙ строке, куда попал, и кнопки после переноса
+ * оказывались прижаты влево). */
 .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;
+  flex-wrap:wrap;
   padding:12px 14px;padding-top:calc(12px + env(safe-area-inset-top));
   background:rgba(250,249,245,.86);border-bottom:1px solid rgba(31,30,29,.08);
   -webkit-backdrop-filter:blur(18px) saturate(160%);backdrop-filter:blur(18px) saturate(160%)}
 .top h1{font-size:19px}
-.top .sub{margin:2px 0 0;font-size:12px;color:var(--text-3)}
+.top .titles{min-width:0;flex:1 1 220px}
+.top .sub{margin:2px 0 0;font-size:12px;color:var(--text-3);
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.acts{display:flex;align-items:center;gap:12px;flex:none;margin-left:auto}
+@media(max-width:480px){.top .sub{-webkit-line-clamp:1}}
 .spacer{flex:1}
 .btn{border:0;border-radius:11px;font-weight:600;font-size:14.5px;padding:12px 18px;
   transition:transform .08s,background .12s}
@@ -56,19 +76,24 @@ input.code:focus{border-color:var(--accent)}
 
 /* ---- комната ---- */
 .roomhead{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+/* Действия комнаты тоже прижаты вправо сами по себе: при переносе строки
+ * flex:1-расширитель выше остаётся на первой строке и кнопки уезжали влево. */
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
 .codebox{display:flex;align-items:center;gap:8px}
 .code{font-family:var(--font-serif);font-size:30px;font-weight:600;letter-spacing:.14em}
+/* min-height — палец, а не курсор: 28px высоты промахиваются. */
 .copy{border:1px solid var(--line);background:var(--bg);border-radius:9px;
-  padding:6px 10px;font-size:12px;color:var(--text-2)}
+  padding:6px 10px;font-size:12px;color:var(--text-2);min-height:36px;
+  display:inline-flex;align-items:center}
 .people{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .person{display:inline-flex;align-items:center;gap:7px;background:var(--bg-soft);
   border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:600}
 .person .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3)}
 .person.on .dot{background:var(--green)}
 .drift{font-size:12.5px;color:var(--text-2);margin-top:8px;min-height:17px;font-variant-numeric:tabular-nums}
-.actions{display:flex;gap:8px;flex-wrap:wrap}
 .pill{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:8px 13px;
-  font-size:12.5px;font-weight:600;color:var(--text-2);display:inline-flex;align-items:center;gap:7px}
+  font-size:12.5px;font-weight:600;color:var(--text-2);display:inline-flex;align-items:center;gap:7px;
+  min-height:36px}
 .pill.on{background:var(--accent-soft);border-color:transparent;color:var(--accent-deep)}
 .pill.lock{color:var(--text-3)}
 .pick{display:block;position:relative;overflow:hidden}
@@ -136,7 +161,17 @@ input.code:focus{border-color:var(--accent)}
   top:calc(12px + env(safe-area-inset-top,0px));
   right:calc(12px + env(safe-area-inset-right,0px))}
 .vwrap:fullscreen .fsexit,.vwrap[data-fs] .fsexit{display:grid}
-.lock{position:absolute;display:inline-flex;align-items:center;gap:6px;
+/* Только бейдж ПОВЕРХ КАДРА («Управляет хост»).
+ *
+ * Класс .lock был объявлен дважды: здесь — как абсолютный бейдж у левого
+ * верхнего угла кадра, и выше, в .pill.lock{color:var(--text-3)} — как
+ * скромная кнопка в панели комнаты. Кнопка #grant носит оба класса
+ * ("pill lock"), поэтому получала position:absolute и top/left:10px: она
+ * выпадала из ряда действий в левый верхний угол страницы и пряталась под
+ * липкой шапкой. В комнате не было переключателя «Гость не управляет» —
+ * оставались только «Микрофон выкл» и «Выйти».
+ * Привязка к .vwrap возвращает бейджу его позицию и не трогает кнопку. */
+.vwrap .lock{position:absolute;display:inline-flex;align-items:center;gap:6px;
   background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:5px 11px;
   font-size:12px;font-weight:600;
   top:calc(10px + env(safe-area-inset-top,0px));
@@ -144,9 +179,11 @@ input.code:focus{border-color:var(--accent)}
 .pcontrols{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .pbtn{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);
   background:var(--bg);display:grid;place-items:center;color:var(--text);flex:none}
-.seek{flex:1;min-width:120px;accent-color:var(--accent-btn)}
+/* Высота бокса ручки, а не дорожки: у range-поля по умолчанию 16px, и на
+ * телефоне в него трудно попасть пальцем. */
+.seek{flex:1;min-width:120px;height:32px;accent-color:var(--accent-btn)}
 .t{font-size:12.5px;color:var(--text-3);font-variant-numeric:tabular-nums;min-width:44px;text-align:center}
-.vol{width:80px;accent-color:var(--accent-btn)}
+.vol{width:80px;height:32px;accent-color:var(--accent-btn)}
 /* Подпись под управлением, а не вторая круглая кнопка рядом с «Полный экран»:
  * две почти одинаковые иконки читаются как два полных экрана. */
 .pfoot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
@@ -162,13 +199,14 @@ input.code:focus{border-color:var(--accent)}
 <body>
 
 <header class="top">
-  <div>
+  <div class="titles">
     <h1 data-i18n="title">Смотрим вместе</h1>
     <p class="sub" data-i18n="sub">Фильм у каждого свой локально · управление одно на двоих</p>
   </div>
-  <span class="spacer"></span>
-  <button class="pill" id="lang" type="button">EN</button>
-  <a class="btn btn-glass" href="./" style="text-decoration:none" data-i18n="back">В приложение</a>
+  <div class="acts">
+    <button class="pill" id="lang" type="button">EN</button>
+    <a class="btn btn-glass" href="./" style="text-decoration:none" data-i18n="back">В приложение</a>
+  </div>
 </header>
 
 <div class="wrap">
