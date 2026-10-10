@@ -63,7 +63,8 @@
       pick_btn: 'Выбрать файл', dl_btn: 'Скачать фильм', plock: 'Управляет хост',
       play_pause: 'Плей / пауза', seek_label: 'Перемотка', volume: 'Громкость',
       fullscreen: 'Полный экран',
-      fit_screen: 'Заполнить экран', fit_on: 'Кадр режется до края экрана',
+      fit_screen: 'Заполнить экран', fit_fill: 'Заполнить экран', fit_whole: 'Кадр целиком',
+      fit_on: 'Кадр режется до края экрана',
       fit_off: 'Кадр целиком, полосы по краям', fs_exit: 'Выйти из полного экрана',
       wait_host: 'Ждём хоста…', wait_guest: 'Ждём гостя…',
       host_here: 'Хост в комнате', guest_here: 'Гость в комнате',
@@ -96,7 +97,8 @@
       pick_btn: 'Choose a file', dl_btn: 'Download film', plock: 'Host controls',
       play_pause: 'Play / pause', seek_label: 'Seek', volume: 'Volume',
       fullscreen: 'Fullscreen',
-      fit_screen: 'Fill the screen', fit_on: 'Frame cropped to the screen edges',
+      fit_screen: 'Fill the screen', fit_fill: 'Fill the screen', fit_whole: 'Whole frame',
+      fit_on: 'Frame cropped to the screen edges',
       fit_off: 'Whole frame, bars at the edges', fs_exit: 'Exit fullscreen',
       wait_host: 'Waiting for the host…', wait_guest: 'Waiting for the guest…',
       host_here: 'Host is in the room', guest_here: 'Guest is in the room',
@@ -139,6 +141,8 @@
     try { document.documentElement.lang = lang; } catch (e) {}
     document.title = T('title') + ' · KsuNiMeet';
     $('lang').textContent = lang === 'ru' ? 'EN' : 'RU';
+    // Переключили язык — подпись режима кадра тоже должна перевестись.
+    renderFit();
   }
 
   if (!CFG.supabaseUrl || !window.supabase) return;
@@ -986,6 +990,17 @@
    */
 
   var w = $('vwrap');
+  var FIT_KEY = 'ksu_fit';
+
+  /* Объявлено на уровне модуля (а не внутри if (w)), чтобы applyLang() мог
+   * вызвать перерисовку подписи: в строгом режиме функция, объявленная в
+   * блоке, снаружи него не видна. */
+  function renderFit() {
+    if (!w || !$('fit')) return;
+    var on = w.classList.contains('fill');
+    $('fit').setAttribute('aria-pressed', on ? 'true' : 'false');
+    if ($('fit-label')) $('fit-label').textContent = on ? T('fit_fill') : T('fit_whole');
+  }
 
   function setAr() {
     var v = $('video');
@@ -1051,14 +1066,10 @@
     document.addEventListener('fullscreenchange', setAr);
     document.addEventListener('webkitfullscreenchange', setAr);
 
-    /* «Заполнить экран»: кадр режется до края. По умолчанию выключено —
-     * целый фильм важнее, чем отсутствие полос. Выбор запоминается. */
-    var FIT_KEY = 'ksu_fit';
-    function renderFit() {
-      var on = w.classList.contains('fill');
-      $('fit').classList.toggle('on', on);
-      $('fit').setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
+    /* Режим кадра: подпись вместо второй круглой кнопки. Раньше рядом с
+     * «Полным экраном» стояла вторая кнопка с почти такой же иконкой — это
+     * читалось как два полных экрана. Теперь это одна подписанная пилюля,
+     * и по её тексту сразу видно, что включено. */
     try { if (localStorage.getItem(FIT_KEY) === '1') w.classList.add('fill'); } catch (e) {}
     renderFit();
     $('fit').addEventListener('click', function () {
@@ -1071,6 +1082,12 @@
     // Выход из полного экрана кнопкой «назад» на телефоне тоже должен вернуть
     // страницу в нормальный вид (иначе останется висеть во весь экран).
     window.addEventListener('popstate', function () { if (w.hasAttribute('data-fs')) exitFs(); });
+
+    /* Размеры коробки в полном экране считаются из visualViewport (layout.js),
+     * поэтому поворот, адресная строка и вырез учитываются без участия этого
+     * файла. Здесь остаётся только форма кадра: она берётся у файла, и после
+     * поворота её надо взять заново — метаданные могли приехать позже. */
+    if (window.KSU_LAYOUT) KSU_LAYOUT.onChange(setAr);
   }
 
   $('grant').addEventListener('click', function () {
