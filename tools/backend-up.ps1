@@ -122,20 +122,38 @@ $headers = @{
 }
 $api = "https://api.github.com/repos/$Repo"
 
-$body = @{ name = "KSU_BACKEND"; value = "pocketbase" } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$api/actions/variables" -Headers $headers `
-  -Body $body -ContentType "application/json" -ErrorAction SilentlyContinue | Out-Null
+# Ask what already exists instead of guessing. Creating a variable that is
+# already there returns 409, and with $ErrorActionPreference = "Stop" that is a
+# TERMINATING error which -ErrorAction SilentlyContinue does not suppress. That
+# killed this script at the create call and left POCKETBASE_URL pointing at the
+# previous tunnel, so the site called an address that no longer existed - the
+# exact failure this script is meant to prevent.
+$existing = (Invoke-RestMethod -Uri "$api/actions/variables?per_page=100" -Headers $headers).variables
 
-$body = @{ name = "POCKETBASE_URL"; value = $url } | ConvertTo-Json
-try {
-  Invoke-RestMethod -Method Patch -Uri "$api/actions/variables/POCKETBASE_URL" -Headers $headers `
-    -Body $body -ContentType "application/json" | Out-Null
-  Say "POCKETBASE_URL updated"
-} catch {
-  Invoke-RestMethod -Method Post -Uri "$api/actions/variables" -Headers $headers `
-    -Body $body -ContentType "application/json" | Out-Null
-  Say "POCKETBASE_URL created"
+function Set-RepoVariable($name, $value) {
+  $payload = @{ name = $name; value = $value } | ConvertTo-Json
+  if ($existing | Where-Object { $_.name -eq $name }) {
+    Invoke-RestMethod -Method Patch -Uri "$api/actions/variables/$name" -Headers $headers `
+      -Body $payload -ContentType "application/json" | Out-Null
+    Say "$name updated"
+  } else {
+    Invoke-RestMethod -Method Post -Uri "$api/actions/variables" -Headers $headers `
+      -Body $payload -ContentType "application/json" | Out-Null
+    Say "$name created"
+  }
 }
+
+Set-RepoVariable "KSU_BACKEND" "pocketbase"
+Set-RepoVariable "POCKETBASE_URL" $url
+
+# Read it back. A write that only appears to succeed is how the site ends up
+# quietly calling a dead address, so success is never assumed here.
+$after = (Invoke-RestMethod -Uri "$api/actions/variables?per_page=100" -Headers $headers).variables
+$readback = ($after | Where-Object { $_.name -eq "POCKETBASE_URL" }).value
+if ($readback -ne $url) {
+  throw "POCKETBASE_URL did not take: wrote $url but reads back $readback"
+}
+Say "verified POCKETBASE_URL"
 
 # This workflow was once left disabled, and a disabled workflow accepts no
 # dispatch at all - the rebuild would then never happen and nothing would say so.
