@@ -35,13 +35,17 @@ there is a server we can log into, point `POCKETBASE_URL` at
 
 **After a reboot, or whenever the site says it cannot reach the backend:**
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tools\backend-up.ps1
-```
+double-click **`START-BACKEND.bat`**, in the top folder of this repository.
+Nothing to type. It waits for the internet itself, so running it immediately
+after boot is fine, and it reports whether it succeeded before closing.
 
-That starts PocketBase, starts the tunnel, reads the new public address, proves
-it answers `/api/health`, writes `POCKETBASE_URL`, re-enables the Pages workflow
-if it has been disabled, and waits for the rebuild.
+(From a command line, the same thing: `powershell -ExecutionPolicy Bypass
+-File tools\backend-up.ps1`. The .bat is a thin wrapper around it, and exists so
+the usual way to do this is a double-click rather than a typed command.)
+
+Either path starts PocketBase, starts the tunnel, reads the new public address,
+proves it answers `/api/health`, writes `POCKETBASE_URL`, re-enables the Pages
+workflow if it has been disabled, and waits for the rebuild.
 
 The tunnel's address **changes every time it starts**. That is the whole reason
 the script exists: without it, a reboot leaves the public site calling an address
