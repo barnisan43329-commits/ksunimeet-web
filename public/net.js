@@ -44,6 +44,23 @@
 
   var cfg = window.KSU_CONFIG || {};
   var SB = cfg.supabaseUrl || '';
+  /* Бэкенд бывает двух родов. Разница для этого файла ровно в двух пробах
+   * ниже: у Supabase это /auth/v1/health и websocket, у PocketBase —
+   * /api/health и поток SSE. Всё остальное (дедлайны, повторы, выбор зеркала,
+   * полоска «нет связи») одинаково и бэкенда не касается. */
+  var PB = cfg.pbUrl || '';
+  var IS_PB = cfg.backend === 'pocketbase';
+
+  /* Токен берём у адаптера, а не из его хранилища: ключ localStorage —
+   * внутреннее дело pb.js, и дублировать его здесь значило бы связать два
+   * файла невидимой ниткой, которая рвётся при первом же переименовании. */
+  function pbToken() {
+    try {
+      return (window.KSU_PB && window.KSU_PB.token && window.KSU_PB.token()) || '';
+    } catch (e) {
+      return '';
+    }
+  }
 
   var GET_TIMEOUT = 12000;      // обычный запрос
   var UP_TIMEOUT = 60000;       // загрузка фильма частями — ей нужен запас
@@ -561,6 +578,15 @@
   }
 
   function probeDb() {
+    if (IS_PB) {
+      if (!PB) return Promise.resolve({ name: 'db', ok: false, why: 'config.js пуст' });
+      var startedPb = nowMs();
+      return one(PB + '/api/health', { method: 'GET', cache: 'no-store' },
+                 PROBE_TIMEOUT + 2000).then(function (out) {
+        if (out.res) return { name: 'db', ok: true, ms: nowMs() - startedPb, status: out.res.status };
+        return { name: 'db', ok: false, why: (out.err && out.err.message) || 'no answer' };
+      });
+    }
     if (!SB) return Promise.resolve({ name: 'db', ok: false, why: 'config.js пуст' });
     var started = nowMs();
     return one(SB + '/auth/v1/health',
@@ -571,7 +597,48 @@
     });
   }
 
+  /* Живые обновления у PocketBase — это поток SSE, а не websocket. Проверяем
+   * именно то, чем пользуется приложение: открывается ли /api/realtime и
+   * приходит ли по нему хоть одно событие (PB_CONNECT с clientId). Просто
+   * «соединение открылось» ничего не доказывает: у SSE статус 200 бывает и у
+   * потока, который тут же закрывается прокси. */
+  function probeRtPb() {
+    if (!PB) return Promise.resolve({ name: 'rt', ok: false, why: 'config.js пуст' });
+    return new Promise(function (resolve) {
+      var settled = false, ctl = null, timer = null;
+      function done(ok, why) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (ctl) { try { ctl.abort(); } catch (e) {} }
+        resolve({ name: 'rt', ok: ok, why: why });
+      }
+      timer = setTimeout(function () { done(false, 'timeout ' + PROBE_TIMEOUT + 'ms'); }, PROBE_TIMEOUT);
+      try {
+        ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        var init = { method: 'GET', headers: { Authorization: pbToken() } };
+        if (ctl) init.signal = ctl.signal;
+        window.fetch(PB + '/api/realtime', init).then(
+          function (res) {
+            if (!res.ok || !res.body) { done(false, 'HTTP ' + res.status); return; }
+            var reader = res.body.getReader();
+            reader.read().then(
+              function (chunk) {
+                done(!chunk.done, chunk.done ? 'поток закрылся сразу' : '');
+              },
+              function (e) { done(false, String((e && e.message) || e)); }
+            );
+          },
+          function (e) { done(false, String((e && e.message) || e)); }
+        );
+      } catch (e) {
+        done(false, String((e && e.message) || e));
+      }
+    });
+  }
+
   function probeRt() {
+    if (IS_PB) return probeRtPb();
     if (!SB) return Promise.resolve({ name: 'rt', ok: false, why: 'config.js пуст' });
     return new Promise(function (resolve) {
       var settled = false, ws = null, timer = null;
@@ -624,7 +691,9 @@
         '<div>' + t('rt') + ': <b>' + line(rt) + '</b></div>' +
         '<div style="margin-top:6px;color:#5f5e59">' + t('mode') + ': ' + (ru ? t('ru_mode') : t('normal')) + '</div>' +
         '<div style="margin-top:4px;color:#5f5e59;font-size:12.5px;word-break:break-all">' +
-          'origin ' + location.host + ' · supabase ' + (SB ? SB.replace(/^https?:\/\//, '') : '—') + '</div>';
+          'origin ' + location.host + ' · ' + (IS_PB ? 'pocketbase' : 'supabase') + ' ' +
+          (IS_PB ? (PB ? PB.replace(/^https?:\/\//, '') : '—')
+                 : (SB ? SB.replace(/^https?:\/\//, '') : '—')) + '</div>';
 
       wrap.innerHTML = html;
       var btn = document.createElement('button');

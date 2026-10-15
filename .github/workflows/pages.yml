@@ -1,8 +1,13 @@
 name: Deploy KsuNiMeet web to GitHub Pages
 
 # Публикуем ТОЛЬКО статику из public/. Секретов в репозитории нет:
-# URL проекта и anon-ключ Supabase — публичные (доступ к данным всё равно
-# ограничивает RLS в базе), а service_role-ключ здесь не нужен никогда.
+# и адрес PocketBase, и URL с anon-ключом Supabase — публичные значения
+# (доступ к данным ограничивают правила коллекций в базе), а секретных ключей
+# в статическом сайте не бывает вообще.
+#
+# Какой бэкенд: переменная репозитория KSU_BACKEND ('pocketbase' или
+# 'supabase'). Адрес сервера — POCKETBASE_URL. Файл config.js собирается ниже,
+# потому что в исходнике этих значений нет и быть не должно.
 
 on:
   push:
@@ -48,30 +53,58 @@ jobs:
           for f in public/index.html public/app.js public/call.html public/call.js \
                    public/watch.html public/watch.js public/turn.js public/favicon.svg \
                    public/manifest.json public/vendor/supabase.js public/net.js \
-                   public/mirror.js public/ping.js public/layout.js; do
+                   public/mirror.js public/ping.js public/layout.js \
+                   public/backend.js public/pb.js; do
             test -s "$f" || { echo "MISSING: $f"; exit 1; }
           done
           echo "all assets present"
 
+      # config.js собирается здесь, а не лежит в репозитории: адрес сервера
+      # отличается на каждом стенде, и держать его в исходнике значит
+      # протаскивать боевой адрес в каждый клон.
       - name: Write runtime config
+        env:
+          BACKEND: ${{ vars.KSU_BACKEND }}
+          PB: ${{ vars.POCKETBASE_URL }}
+          SB: ${{ vars.SUPABASE_URL }}
+          SBK: ${{ vars.SUPABASE_ANON_KEY }}
         run: |
-          cat > public/config.js <<EOF
+          set -e
+          if [ "${BACKEND:-pocketbase}" = "pocketbase" ]; then
+            cat > public/config.js <<EOF
           window.KSU_CONFIG = {
-            supabaseUrl: "${{ vars.SUPABASE_URL }}",
-            supabaseAnonKey: "${{ vars.SUPABASE_ANON_KEY }}"
+            backend: "pocketbase",
+            pbUrl: "$PB"
           };
           EOF
+          else
+            cat > public/config.js <<EOF
+          window.KSU_CONFIG = {
+            backend: "supabase",
+            supabaseUrl: "$SB",
+            supabaseAnonKey: "$SBK"
+          };
+          EOF
+          fi
+          echo "--- public/config.js ---"
+          cat public/config.js
 
-      # Соединение с Supabase открываем ЗАРАНЕЕ, ещё на разборе страницы.
+      # Соединение с бэкендом открываем ЗАРАНЕЕ, ещё на разборе страницы.
       # Скрипты лежат на своём домене, а первый запрос к базе (вход, история)
       # уходит на соседний хост — без preconnect браузер тратит на него
       # лишний круг DNS+TLS, и это самые заметные сотни миллисекунд входа.
+      # Для российского канала это ещё и важно вдвойне: меньше кругов — меньше
+      # шансов попасть в 16-килобайтный обрыв.
       # Подставить адрес можно только на сборке: в исходнике его нет.
-      - name: Preconnect to the Supabase host
+      - name: Preconnect to the backend host
         env:
+          BACKEND: ${{ vars.KSU_BACKEND }}
+          PB: ${{ vars.POCKETBASE_URL }}
           SB: ${{ vars.SUPABASE_URL }}
         run: |
-          HOST=$(printf '%s' "$SB" | sed -E 's#^(https?://[^/]+).*#\1#')
+          set -e
+          if [ "${BACKEND:-pocketbase}" = "pocketbase" ]; then URL="$PB"; else URL="$SB"; fi
+          HOST=$(printf '%s' "$URL" | sed -E 's#^(https?://[^/]+).*#\1#')
           if [ -n "$HOST" ]; then
             sed -i "s#<!--PRE-CONNECT-->#<link rel=\"preconnect\" href=\"$HOST\" crossorigin>#" public/index.html
           fi

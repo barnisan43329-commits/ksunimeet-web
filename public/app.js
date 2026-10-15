@@ -203,7 +203,12 @@
 
   /* ================= Supabase ================= */
 
-  if (!CFG.supabaseUrl || !CFG.supabaseAnonKey) {
+  /* Бэкенд бывает двух родов: Supabase (ключ проекта) и PocketBase (адрес
+   * сервера, ключа нет вовсе). Проверяем то, что действительно нужно
+   * выбранному бэкенду, иначе при переезде на PocketBase экран входа ругался
+   * бы «config.js не загрузился» при полностью исправном конфиге. */
+  var IS_PB = CFG.backend === 'pocketbase';
+  if (IS_PB ? !CFG.pbUrl : (!CFG.supabaseUrl || !CFG.supabaseAnonKey)) {
     $('auth-err').textContent = 'config.js не загрузился';
     return;
   }
@@ -214,7 +219,7 @@
     return;
   }
 
-  var sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
+  var sb = window.supabase.createClient(IS_PB ? CFG.pbUrl : CFG.supabaseUrl, IS_PB ? '' : CFG.supabaseAnonKey, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'ksu-auth' },
     realtime: { params: { eventsPerSecond: 20 } },
     /* Запросы идут через net.js: у каждого есть дедлайн и повтор. На канале,

@@ -1,7 +1,18 @@
-# KsuNiMeet web — GitHub Pages + Supabase
+# KsuNiMeet web — GitHub Pages + Supabase / PocketBase
 
-Статический фронтенд KsuNiMeet на GitHub Pages, данные и realtime — в Supabase.
-Это миграция работающего PHP-приложения (`../KsuNiMeet`) с VPS.
+Статический фронтенд KsuNiMeet на GitHub Pages; данные и realtime — в бэкенде,
+который выбирается в `config.js` (`backend`). Это миграция работающего
+PHP-приложения (`../KsuNiMeet`) с VPS.
+
+> **Бэкендом теперь может быть PocketBase** — свой сервер вместо Supabase.
+> Фронтенд при этом НЕ меняется: `public/backend.js` подставляет адаптер
+> `public/pb.js`, который повторяет интерфейс `supabase-js` поверх PocketBase.
+> Схема, хуки, установка и известные ограничения — в
+> [`pocketbase/README.md`](pocketbase/README.md).
+>
+> Документ ниже описывает исходный вариант на Supabase и остаётся верным для
+> него; всё, что помечено как работа на Supabase (`supabase/`, RLS, Realtime),
+> к пути PocketBase не относится.
 
 ## Зачем и чего ждать
 
