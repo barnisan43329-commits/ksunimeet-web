@@ -238,10 +238,20 @@
    * В APK страница живёт внутри WebView, и нативные уведомления нужно
    * включать и снабжать токеном от самой страницы. В обычном браузере
    * window.KsuNiMeet нет — тогда все вызовы молча ничего не делают. */
-  function bridge(name, a, b, c) {
+  /* Аргументы передаём РОВНО столько, сколько дали. Раньше функция всегда
+   * звала br[name](a, b, c), то есть метод без параметров (enable/disable)
+   * получал три undefined, а setAppActive — три вместо одного. Нативная
+   * сторона ищет метод по имени И числу параметров, поэтому такой вызов
+   * молча не находил цель. */
+  function bridge(name) {
     try {
       var br = window.KsuNiMeet;
-      if (br && typeof br[name] === 'function') br[name](a, b, c);
+      if (!br || typeof br[name] !== 'function') return;
+      var n = arguments.length - 1;
+      if (n <= 0) br[name]();
+      else if (n === 1) br[name](arguments[1]);
+      else if (n === 2) br[name](arguments[1], arguments[2]);
+      else br[name](arguments[1], arguments[2], arguments[3]);
     } catch (e) {}
   }
 
@@ -252,6 +262,18 @@
   function pushSession(session) {
     if (!session || !session.access_token || !session.user) return;
     bridge('saveSession', session.access_token, session.user.id, session.refresh_token || '');
+    pushBackend();
+  }
+
+  /* Адрес бэкенда — ОТДЕЛЬНЫМ вызовом: bridge() передаёт ровно три аргумента,
+   * а saveSession их уже занимает. Отдаём его потому, что у туннеля меняется
+   * имя при каждом перезапуске домашней машины: зашитый в APK адрес рано или
+   * поздно устареет, и фоновые уведомления молча перестанут приходить. */
+  function pushBackend() {
+    var cfg = window.KSU_CONFIG || {};
+    if (String(cfg.backend || 'supabase') !== 'pocketbase') return;
+    var base = String(cfg.pbUrl || '').replace(/\/+$/, '');
+    if (base) bridge('saveBackend', base);
   }
 
   /* ================= экраны ================= */
